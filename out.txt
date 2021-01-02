@@ -1,0 +1,13 @@
+#PROTO	LOCAL_IP	L_PORT	REMOTE_IP	R_PORT	PROCESS		ACTION
+*	127.0.0.1	*	127.0.0.1	*	*		ACCEPT_HIDE
+UDP	*		68	*		67	*		ACCEPT
+UDP	*		*	8.8.8.8		53	*		ACCEPT
+UDP	*		*	8.8.4.4		53	*		ACCEPT
+TCP	*		*	*		80	firefox.exe	ACCEPT
+TCP	*		*	*		443	firefox.exe	ACCEPT
+TCP	*		*	*		22	putty.exe	ACCEPT
+TCP	*		*	*		23	putty.exe	ACCEPT
+TCP	*		*	*		3389	TSClient.exe	ACCEPT
+TCP	*		*	*		22	WinSCP.exe	ACCEPT
+TCP	*		*	*		8333	bitcoin-qt.exe	ACCEPT
+TCP	*		*	*		*	tor.exe		ACCEPT
