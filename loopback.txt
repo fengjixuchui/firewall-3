@@ -1,4 +1,5 @@
-#PROTO	CLIENT_IP	PORT	PROCESS		SERVER_IP	PORT	PROCESS		ACTION
+#PROTO	CLIENT_IP	C_PORT	C_PROCESS	SERVER_IP	S_PORT	S_PROCESS	ACTION
+#==================================================================================================
 *	*		*	tor.exe		*		*	tor.exe		ACCEPT_HIDE 	#Allow tor.exe loopback to itself
-*	*		*	tor.exe		*		*	*		DROP		#Drop tor.exe loopback to all others 
-*	*		*	*		*		*	*		ACCEPT_HIDE	#Allow other loopback
+*	*		*	tor.exe		*		*	*		DROP		#Block tor.exe loopback to all others 
+*	*		*	*		*		*	*		ACCEPT_HIDE	#Allow others to loopback

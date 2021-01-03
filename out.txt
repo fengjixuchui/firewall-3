@@ -1,13 +1,15 @@
 #PROTO	LOCAL_IP	L_PORT	REMOTE_IP	R_PORT	PROCESS		ACTION
-UDP	*		68	*		67	*		ACCEPT #DHCP
-UDP	*		*	8.8.8.8		53	*		ACCEPT #Google DNS
-UDP	*		*	8.8.4.4		53	*		ACCEPT #Google DNS
-TCP	*		*	*		80	firefox.exe	ACCEPT #Firefox HTTP
-TCP	*		*	*		443	firefox.exe	ACCEPT #Firefox HTTPS
-TCP	*		*	*		22	putty.exe	ACCEPT #PuTTY SSH
-TCP	*		*	*		23	putty.exe	ACCEPT #PuTTY Telnet
-TCP	*		*	*		3389	TSClient.exe	ACCEPT #Parallels RDP
-TCP	*		*	*		22	WinSCP.exe	ACCEPT #WinSCP SFTP
-TCP	*		*	*		8333	bitcoin-qt.exe	ACCEPT #Bitcoin Core
-TCP	*		*	*		*	tor.exe		ACCEPT #Tor
-*	*		*	192.168.88.0/24	*	*		ACCEPT #Allow to 192.168.88.*	
+#==================================================================================
+UDP	*		68	*		67	*		ACCEPT		#DHCP
+*	*		*	192.168.88.0/24	*	*		ACCEPT 		#192.168.88.*	
+UDP	*		*	8.8.8.8		53	*		ACCEPT		#Google DNS
+UDP	*		*	8.8.4.4		53	*		ACCEPT		#Google DNS
+TCP	*		*	*		80	firefox.exe	ACCEPT		#Firefox HTTP
+TCP	*		*	*		443	firefox.exe	ACCEPT		#Firefox HTTPS
+TCP	*		*	*		80	chrome.exe	ACCEPT		#Chrome HTTP
+TCP	*		*	*		443	chrome.exe	ACCEPT		#Chrome HTTPS
+TCP	*		*	*		22	putty.exe	ACCEPT		#PuTTY SSH
+TCP	*		*	*		23	putty.exe	ACCEPT		#PuTTY Telnet
+TCP	*		*	*		22	WinSCP.exe	ACCEPT		#WinSCP SFTP
+TCP	*		*	*		8333	bitcoin-qt.exe	ACCEPT		#Bitcoin Core
+TCP	*		*	*		*	tor.exe		ACCEPT		#Tor
