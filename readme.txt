@@ -13,8 +13,9 @@ Instruction
 
 1. Edit config files
 
-  -> in.txt (Inbound rules)
+  -> loopback.txt (Loopback rules)
   -> out.txt (Outbound rules)
+  -> in.txt (Inbound rules)
 
 2. Disable Windows Firewall
 
@@ -25,6 +26,4 @@ Instruction
 Upcoming
 --------
 
-* Loopback rules
-* Subnet masks
 * GUI
