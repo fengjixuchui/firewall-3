@@ -25,6 +25,6 @@ Instruction
 Upcoming
 --------
 
-* Seperate loopback rules
+* Loopback rules
 * Subnet masks
 * GUI
