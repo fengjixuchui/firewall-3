@@ -416,9 +416,9 @@ bool process_packet(time_t now, string process, string direction,
 				rule rule = table[i];
 				if (rule.process.compare("*") != 0 && rule.process.compare(process) != 0) continue;
 				if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
-				if (ip_match(local_ip, rule.local_ip)) continue;
+				if (!ip_match(local_ip, rule.local_ip)) continue;
 				if (rule.local_port.compare("*") != 0 && rule.local_port.compare(local_port) != 0) continue;
-				if (ip_match(remote_ip, rule.remote_ip)) continue;
+				if (!ip_match(remote_ip, rule.remote_ip)) continue;
 				if (rule.remote_port.compare("*") != 0 && rule.remote_port.compare(remote_port) != 0) continue;
 				if (rule.policy.compare("ACCEPT") == 0)
 				{
@@ -600,10 +600,10 @@ bool process_loopback_packet(time_t now, string protocol,
 			{
 				loopback_rule rule = table[i];
 				if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
-				if (ip_match(client_ip, rule.client_ip)) continue;
+				if (!ip_match(client_ip, rule.client_ip)) continue;
 				if (rule.client_port.compare("*") != 0 && rule.client_port.compare(client_port) != 0) continue;
 				if (rule.client_process.compare("*") != 0 && rule.client_process.compare(client_process) != 0) continue;
-				if (ip_match(server_ip, rule.server_ip)) continue;
+				if (!ip_match(server_ip, rule.server_ip)) continue;
 				if (rule.server_port.compare("*") != 0 && rule.server_port.compare(server_port) != 0) continue;
 				if (rule.server_process.compare("*") != 0 && rule.server_process.compare(server_process) != 0) continue;
 				if (rule.policy.compare("ACCEPT") == 0)
@@ -980,7 +980,7 @@ bool init()
 			}
 			else
 			{
-				if (local_ip.compare("127.0.0.1") == 0 || local_ip.compare(remote_ip) == 0) //loopback
+				if (local_ip.compare(remote_ip) == 0 || ip_match(local_ip, "127.0.0.1/8")) //loopback
 				{
 					string tuple = "";
 					tuple.append(protocol);
