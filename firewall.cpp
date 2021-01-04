@@ -335,21 +335,19 @@ void socket_status_update(socket_state * socket_state_)
 	}
 }
 
-void packet_update_state(time_t now, socket_state* socket_state_, string direction, bool fin, bool syn, bool rst, bool psh, bool ack)
+void packet_update_state(socket_state* socket_state_, string direction, bool fin, bool syn, bool rst, bool psh, bool ack)
 {
-	if (socket_state_->status.compare("SYN") == 0)
+	if (socket_state_->status.compare("CNCT") == 0)
 	{
 		if (socket_state_->direction.compare(direction) != 0 &&
 			(socket_state_->protocol.compare("TCP") == 0 && syn && ack || socket_state_->protocol.compare("UDP") == 0))
 		{
 			socket_state_->status = "EST";
-			socket_state_->heartbeat = now;
 			socket_status_update(socket_state_);
 		}
 	}
 	else if (socket_state_->status.compare("EST") == 0)
 	{
-		socket_state_->heartbeat = now;
 		if ((socket_state_->protocol.compare("TCP") == 0 && fin))
 		{
 			if (direction.compare("->") == 0)
@@ -366,19 +364,28 @@ void packet_update_state(time_t now, socket_state* socket_state_, string directi
 	}
 	else if (socket_state_->status.compare("LFIN") == 0)
 	{
-		if (direction.compare("<-") == 0)
+		if (direction.compare("<-") == 0 &&
+			socket_state_->protocol.compare("TCP") == 0 && fin)
 		{
-			socket_state_->status = "CLOSED";
-			socket_state_->heartbeat = now;
+			socket_state_->status = "CLSD";
 			socket_status_update(socket_state_);
 		}
 	}
 	else if (socket_state_->status.compare("RFIN") == 0)
 	{
-		if (direction.compare("->") == 0)
+		if (direction.compare("->") == 0 &&
+			socket_state_->protocol.compare("TCP") == 0 && fin) 
 		{
-			socket_state_->status = "CLOSED";
-			socket_state_->heartbeat = now;
+			socket_state_->status = "CLSD";
+			socket_status_update(socket_state_);
+		}
+	}
+	else if (socket_state_->status.compare("CLSD") == 0)
+	{
+		if (direction.compare(socket_state_->direction) == 0 &&
+			socket_state_->protocol.compare("TCP") == 0 && syn && !ack)
+		{
+			socket_state_->status = "SYN";
 			socket_status_update(socket_state_);
 		}
 	}
@@ -387,7 +394,7 @@ void packet_update_state(time_t now, socket_state* socket_state_, string directi
 bool process_packet(time_t now, string process, string direction,
 	string protocol, string local_ip, string local_port, string remote_ip, string remote_port, 
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
-	vector<rule> table, bool packet = true)
+	bool packet = true)
 {
 	string tuple = "";
 	tuple.append(protocol);
@@ -411,6 +418,12 @@ bool process_packet(time_t now, string process, string direction,
 
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
+			vector<rule> table;
+			if (direction.compare("->") == 0)
+				table = out_rules;
+			else if (direction.compare("<-") == 0)
+				table = in_rules;
+
 			for (size_t i = 0; i < table.size(); i++)
 			{
 				rule rule = table[i];
@@ -448,7 +461,7 @@ bool process_packet(time_t now, string process, string direction,
 		socket_state_->remote_ip = remote_ip;
 		socket_state_->remote_port = remote_port;
 		socket_state_->direction = direction;
-		socket_state_->status = "SYN";
+		socket_state_->status = "CNCT";
 		socket_state_->heartbeat = now;
 
 		sockets[tuple] = socket_state_;
@@ -461,51 +474,9 @@ bool process_packet(time_t now, string process, string direction,
 	{
 		socket_state_ = sockets[tuple];
 
-		if (socket_state_->status.compare("SYN") == 0)
-		{
-			if (socket_state_->direction.compare(direction) != 0 &&
-				(protocol.compare("TCP") == 0 && syn && ack || protocol.compare("UDP") == 0))
-			{
-				socket_state_->status = "EST";
-				socket_state_->heartbeat = now;
-				socket_status_update(socket_state_);
-			}
-		}
-		else if (socket_state_->status.compare("EST") == 0)
-		{
-			socket_state_->heartbeat = now;
-			if ((protocol.compare("TCP") == 0 && fin))
-			{
-				if (direction.compare("->") == 0)
-				{
-					socket_state_->status = "LFIN";
-					socket_status_update(socket_state_);
-				}
-				else if (direction.compare("<-") == 0)
-				{
-					socket_state_->status = "RFIN";
-					socket_status_update(socket_state_);
-				}
-			}
-		}
-		else if (socket_state_->status.compare("LFIN") == 0)
-		{
-			if (direction.compare("<-") == 0)
-			{
-				socket_state_->status = "LCLS";
-				socket_state_->heartbeat = now;
-				socket_status_update(socket_state_);
-			}
-		}
-		else if (socket_state_->status.compare("RFIN") == 0)
-		{
-			if (direction.compare("->") == 0)
-			{
-				socket_state_->status = "RCLS";
-				socket_state_->heartbeat = now;
-				socket_status_update(socket_state_);
-			}
-		}
+		socket_state_->heartbeat = now;
+
+		packet_update_state(socket_state_, direction, fin, syn, rst, psh, ack);
 	}
 
 	if (packet)
@@ -560,7 +531,7 @@ bool process_loopback_packet(time_t now, string protocol,
 	string client_ip, string client_port, string client_process, 
 	string server_ip, string server_port, string server_process, 
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
-	vector<loopback_rule> table, bool packet = true)
+	bool packet = true)
 {
 	mtx_sockets.lock();
 
@@ -596,6 +567,8 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
+			vector<loopback_rule> table = loopback_rules;
+
 			for (size_t i = 0; i < table.size(); i++)
 			{
 				loopback_rule rule = table[i];
@@ -636,7 +609,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		socket_state_->remote_ip = server_ip;
 		socket_state_->remote_port = server_port;
 		socket_state_->direction = "->";
-		socket_state_->status = "SYN";
+		socket_state_->status = "CNCT";
 		socket_state_->heartbeat = now;
 
 		sockets[out_tuple] = socket_state_;
@@ -662,7 +635,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		socket_state_->remote_ip = client_ip;
 		socket_state_->remote_port = client_port;
 		socket_state_->direction = "<-";
-		socket_state_->status = "SYN";
+		socket_state_->status = "CNCT";
 		socket_state_->heartbeat = now;
 
 		sockets[in_tuple] = socket_state_;
@@ -680,7 +653,8 @@ bool process_loopback_packet(time_t now, string protocol,
 	else
 	{
 		socket_state_ = sockets[out_tuple];
-		packet_update_state(now, socket_state_, "->", fin, syn, rst, psh, ack);
+		socket_state_->heartbeat = now;
+		packet_update_state(socket_state_, "->", fin, syn, rst, psh, ack);
 
 		if (packet)
 		{
@@ -691,7 +665,8 @@ bool process_loopback_packet(time_t now, string protocol,
 		if (sockets.find(in_tuple) != sockets.cend()) //just in case
 		{
 			socket_state_ = sockets[in_tuple];
-			packet_update_state(now, socket_state_, "<-", fin, syn, rst, psh, ack);
+			socket_state_->heartbeat = now;
+			packet_update_state(socket_state_, "<-", fin, syn, rst, psh, ack);
 
 			if (packet)
 			{
@@ -1018,7 +993,7 @@ bool init()
 								remote_ip, remote_port, process_,
 								local_ip, local_port, process,
 								0, false, true, false, false, false,
-								loopback_rules, false))
+								false))
 							{
 								if (state.compare("ESTABLISHED") == 0)
 								{
@@ -1026,7 +1001,7 @@ bool init()
 										local_ip, local_port, process,
 										remote_ip, remote_port, process_,
 										0, false, true, false, false, true,
-										loopback_rules, false);
+										false);
 								}
 							}
 						}
@@ -1041,38 +1016,38 @@ bool init()
 						process_packet(now, process, "->",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							out_rules, false);
+							false);
 					}
 					else if (state.compare("SYN_RECV") == 0)
 					{
 						process_packet(now, process, "<-",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							out_rules, false);
+							false);
 					}
 					else if (state.compare("ESTABLISHED") == 0)
 					{
 						if (process_packet(now, process, "<-",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							in_rules, false))
+							false))
 						{
 							process_packet(now, process, "->",
 								protocol, local_ip, local_port, remote_ip, remote_port, 0,
 								false, true, false, false, true,
-								out_rules, false);
+								false);
 						}
 						else
 						{
 							if (process_packet(now, process, "->",
 								protocol, local_ip, local_port, remote_ip, remote_port, 0,
 								false, true, false, false, false,
-								out_rules, false))
+								false))
 							{
 								process_packet(now, process, "<-",
 									protocol, local_ip, local_port, remote_ip, remote_port, 0,
 									false, true, false, false, true,
-									in_rules, false);
+									false);
 							}
 						}
 					}
@@ -1121,7 +1096,7 @@ void socket_()
 			event = "LISTEN";
 			break;
 		case WINDIVERT_EVENT_SOCKET_CONNECT:
-			event = "SYN";
+			event = "CNCT";
 			break;
 		case WINDIVERT_EVENT_SOCKET_ACCEPT:
 			event = "ACCEPT";
@@ -1172,7 +1147,7 @@ void socket_()
 		string remote_ip = string(remote_str);
 		string remote_port = to_string(addr.Socket.RemotePort);
 
-		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("SYN") == 0))
+		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("CNCT") == 0))
 		{
 			mtx_processByPort.lock();
 			processByPort_[protocol + " " + local_port] = process;
@@ -1271,22 +1246,19 @@ void network()
 			if (!process_loopback_packet(now, protocol,
 				string(src_str), to_string(src_port), processByPort(protocol, to_string(src_port)),
 				string(dst_str), to_string(dst_port), processByPort(protocol, to_string(dst_port)),
-				packet_len, fin, syn, rst, psh, ack,
-				loopback_rules)) continue;
+				packet_len, fin, syn, rst, psh, ack)) continue;
 		}
 		else if (addr.Outbound)
 		{
 			if (!process_packet(now, processByPort(protocol, to_string(src_port)), "->",
 				protocol, string(src_str), to_string(src_port), string(dst_str), to_string(dst_port), packet_len,
-				fin, syn, rst, psh, ack,
-				out_rules)) continue;
+				fin, syn, rst, psh, ack)) continue;
 		}
 		else
 		{
 			if (!process_packet(now, processByPort(protocol, to_string(dst_port)), "<-",
 				protocol, string(dst_str), to_string(dst_port), string(src_str), to_string(src_port), packet_len,
-				fin, syn, rst, psh, ack,
-				in_rules)) continue;
+				fin, syn, rst, psh, ack)) continue;
 		}
 
 		//WinDivertHelperCalcChecksums(packet, packet_len, &addr, 0);
@@ -1306,7 +1278,6 @@ void heartbeat()
 
 	for (;;)
 	{
-
 		mtx_sockets.lock();
 
 		time(&now);
@@ -1321,7 +1292,7 @@ void heartbeat()
 
 			mtx_console.lock();
 
-			cout << "PRO STATUS  LOCAL                  REMOTE                RECV SENT PROCESS" << endl;
+			cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
 
 			size_t row = 0;
 			for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
@@ -1332,47 +1303,54 @@ void heartbeat()
 				string& tuple = *i;
 				socket_state_ = sockets[tuple];
 
+				ULONG idle = difftime(now, socket_state_->heartbeat);
+				string idle_ = idle > 999 ? "000" : to_string(idle);
+
 				cout
 					<< left
 					<< socket_state_->protocol << " "
-					<< setw(7) << socket_state_->status << " "
+					<< setw(4) << socket_state_->status << " "
 					<< right
 					<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
 					<< socket_state_->direction
 					<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
 					/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
 					/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
+					<< setw(3) << idle_ << " "
 					<< left
 					<< setw(12) << truncate(socket_state_->process, 12)
-					<< endl;
+					/* << endl */;
 				row++;
 			}
 
 			mtx_console.unlock();
 		}
 
-		for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
+		for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); )
 		{
-			string& tuple = *i;
-			socket_state_ = sockets[tuple];
+			string tuple = i->first;
+			socket_state_ = i->second;
 
 			if (socket_state_->status.compare("EST") != 0 &&
 				difftime(now, socket_state_->heartbeat) >= TIMEOUT)
 			{
-				sockets_order.erase(i);
-				sockets.erase(tuple);
+				sockets_order.remove(tuple);
+				i = sockets.erase(i);
+				continue;
 			}
 
-			if (socket_state_->status.compare("TIMEOUT") != 0)
+			if (socket_state_->status.compare("TOUT") != 0)
 			{
 				if (socket_state_->protocol.compare("UDP") == 0 && difftime(now, socket_state_->heartbeat) >= UDP_TIMEOUT ||
 					socket_state_->protocol.compare("TCP") == 0 && difftime(now, socket_state_->heartbeat) >= TCP_TIMEOUT)
 				{
-					socket_state_->status = "TIMEOUT";
+					socket_state_->status = "TOUT";
 					socket_state_->heartbeat = now;
 					socket_status_update(socket_state_);
 				}
 			}
+
+			i++;
 		}
 
 		mtx_sockets.unlock();
