@@ -16,61 +16,12 @@
 
 #include "windivert.h"
 
+using namespace std;
+
 #define ntohs(x)            WinDivertHelperNtohs(x)
 #define ntohl(x)            WinDivertHelperNtohl(x)
 #define htons(x)            WinDivertHelperHtons(x)
 #define htonl(x)            WinDivertHelperHtonl(x)
-
-#define MAXBUF 4096
-#define INET6_ADDRSTRLEN 45
-#define TIMEOUT 3
-#define TCP_TIMEOUT 300
-#define UDP_TIMEOUT 10
-
-#define MAX_SOCKETS_UI 100
-
-using namespace std;
-
-struct socket_state
-{
-	string process = "";
-	string protocol = "";
-	string local_ip = "";
-	string local_port = "";
-	string remote_ip = "";
-	string remote_port = "";
-	string direction = "";
-	ULONG packets_in = 0;
-	ULONG packets_out = 0;
-	ULONG bytes_in = 0;
-	ULONG bytes_out = 0;
-	string status = "";
-	string flags = "";
-	time_t heartbeat = 0;
-};
-
-struct rule
-{
-	string protocol;
-	string local_ip;
-	string local_port;
-	string remote_ip;
-	string remote_port;
-	string process;
-	string policy;
-};
-
-struct loopback_rule
-{
-	string protocol;
-	string client_ip;
-	string client_port;
-	string client_process;
-	string server_ip;
-	string server_port;
-	string server_process;
-	string policy;
-};
 
 vector<string> split_args(string str)
 {
@@ -166,19 +117,19 @@ string format_ip(string ip)
 	}
 }
 
-static inline void ltrim(string& s) {
+static inline void ltrim(string & s) {
 	s.erase(s.begin(), find_if(s.begin(), s.end(), [](unsigned char ch) {
 		return !isspace(ch);
 		}));
 }
 
-static inline void rtrim(string& s) {
+static inline void rtrim(string & s) {
 	s.erase(find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
 		return !isspace(ch);
 		}).base(), s.end());
 }
 
-static inline void trim(string& s) {
+static inline void trim(string & s) {
 	ltrim(s);
 	rtrim(s);
 }
@@ -256,7 +207,52 @@ bool ip_match(string ip, string subnet)
 	return ~(mask & (ip_ ^ network_)) == 0xFFFFFFFF;
 }
 
-int mode = 0;
+#define MAXBUF 4096
+#define INET6_ADDRSTRLEN 45
+#define TIMEOUT 3
+#define TCP_TIMEOUT 300
+#define UDP_TIMEOUT 10
+
+struct socket_state
+{
+	string process = "";
+	string protocol = "";
+	string local_ip = "";
+	string local_port = "";
+	string remote_ip = "";
+	string remote_port = "";
+	string direction = "";
+	ULONG packets_in = 0;
+	ULONG packets_out = 0;
+	ULONG bytes_in = 0;
+	ULONG bytes_out = 0;
+	string status = "";
+	string flags = "";
+	time_t heartbeat = 0;
+};
+
+struct rule
+{
+	string protocol;
+	string local_ip;
+	string local_port;
+	string remote_ip;
+	string remote_port;
+	string process;
+	string policy;
+};
+
+struct loopback_rule
+{
+	string protocol;
+	string client_ip;
+	string client_port;
+	string client_process;
+	string server_ip;
+	string server_port;
+	string server_process;
+	string policy;
+};
 
 HANDLE s_handle;
 HANDLE n_handle;
@@ -269,6 +265,7 @@ list<string> sockets_order;
 unordered_map<string, socket_state*> sockets = {};
 
 unordered_map<string, string> processByPort_;
+unordered_map<string, socket_state*> processUnknown;
 
 mutex mtx_sockets;
 mutex mtx_processByPort;
@@ -302,110 +299,109 @@ string processById(DWORD id)
 	return filename;
 }
 
-string processByPort(string protocol, string port)
+string processByPort(string protocol, string ip, string port)
 {
+	if (protocol.compare("UDP") == 0)
+		int x = 0;
+
+	string tuple1 = protocol + " " + ip + ":" + port;
+	string tuple2 = protocol + " 0.0.0.0:" + port;
+
 	string process = "";
-	string pp = protocol + " " + port;
+
 	mtx_processByPort.lock();
-	if (sockets.find(pp) == sockets.cend())
+
+	if (processByPort_.find(tuple1) != processByPort_.cend())
 	{
-		process = processByPort_[pp];
+		process = processByPort_[tuple1];
 	}
+	else if (processByPort_.find(tuple2)!= processByPort_.cend())
+	{
+		process = processByPort_[tuple2];
+	}
+
 	mtx_processByPort.unlock();
+
 	return process;
 }
 
-void socket_status_update(socket_state * socket_state_)
+void socket_update_status(socket_state * socket_state_, string direction, bool fin, bool syn, bool rst, bool psh, bool ack)
 {
-	if (mode == 1)
+	if (socket_state_->protocol.compare("UDP") == 0)
 	{
-		mtx_console.lock();
-		cout
-			<< left
-			<< setw(12) << truncate(socket_state_->process, 12) << " "
-			<< socket_state_->protocol << " "
-			<< setw(10) << socket_state_->status << " "
-			<< right
-			<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
-			<< socket_state_->direction
-			<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
-			<< socket_state_->flags
-			<< endl;
-		mtx_console.unlock();
-	}
-}
-
-void packet_update_state(socket_state* socket_state_, string direction, bool fin, bool syn, bool rst, bool psh, bool ack)
-{
-	if (socket_state_->status.compare("CNCT") == 0)
-	{
-		if (socket_state_->direction.compare(direction) != 0 &&
-			(socket_state_->protocol.compare("TCP") == 0 && syn && ack || socket_state_->protocol.compare("UDP") == 0))
+		if (socket_state_->status.compare("CNCT") == 0)
+		{
+			if (socket_state_->direction.compare(direction) != 0)
+			{
+				socket_state_->status = "EST";
+			}
+		}
+		else if (socket_state_->status.compare("TOUT") == 0)
 		{
 			socket_state_->status = "EST";
-			socket_status_update(socket_state_);
 		}
 	}
-	else if (socket_state_->status.compare("EST") == 0)
+	else if (socket_state_->protocol.compare("TCP") == 0)
 	{
-		if ((socket_state_->protocol.compare("TCP") == 0 && fin))
+		if (rst)
 		{
-			if (direction.compare("->") == 0)
+			socket_state_->status = "RST";
+		}
+		else if (socket_state_->status.compare("CNCT") == 0)
+		{
+			if (socket_state_->direction.compare(direction) != 0 && syn && ack)
 			{
-				socket_state_->status = "LFIN";
-				socket_status_update(socket_state_);
-			}
-			else if (direction.compare("<-") == 0)
-			{
-				socket_state_->status = "RFIN";
-				socket_status_update(socket_state_);
+				socket_state_->status = "EST";
 			}
 		}
-	}
-	else if (socket_state_->status.compare("LFIN") == 0)
-	{
-		if (direction.compare("<-") == 0 &&
-			socket_state_->protocol.compare("TCP") == 0 && fin)
+		else if (socket_state_->status.compare("EST") == 0)
 		{
-			socket_state_->status = "CLSD";
-			socket_status_update(socket_state_);
+			if (fin && !ack)
+			{
+				if (direction.compare("->") == 0)
+				{
+					socket_state_->status = "LFIN";
+				}
+				else if (direction.compare("<-") == 0)
+				{
+					socket_state_->status = "RFIN";
+				}
+			}
 		}
-	}
-	else if (socket_state_->status.compare("RFIN") == 0)
-	{
-		if (direction.compare("->") == 0 &&
-			socket_state_->protocol.compare("TCP") == 0 && fin) 
+		else if (socket_state_->status.compare("LFIN") == 0)
 		{
-			socket_state_->status = "CLSD";
-			socket_status_update(socket_state_);
+			if (direction.compare("<-") == 0 && fin && ack)
+			{
+				socket_state_->status = "CLSD";
+			}
 		}
-	}
-	else if (socket_state_->status.compare("CLSD") == 0)
-	{
-		if (direction.compare(socket_state_->direction) == 0 &&
-			socket_state_->protocol.compare("TCP") == 0 && syn && !ack)
+		else if (socket_state_->status.compare("RFIN") == 0)
 		{
-			socket_state_->status = "SYN";
-			socket_status_update(socket_state_);
+			if (direction.compare("->") == 0 && fin && ack)
+			{
+				socket_state_->status = "CLSD";
+			}
+		}
+		else if (socket_state_->status.compare("CLSD") == 0)
+		{
+			if (syn && !ack)
+			{
+				socket_state_->status = "CNCT";
+			}
+			else if (socket_state_->status.compare("TOUT") == 0)
+			{
+				socket_state_->status = "EST";
+			}
 		}
 	}
 }
 
 bool process_packet(time_t now, string process, string direction,
-	string protocol, string local_ip, string local_port, string remote_ip, string remote_port, 
+	string protocol, string local_ip, string local_port, string remote_ip, string remote_port,
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
 	bool packet = true)
 {
-	string tuple = "";
-	tuple.append(protocol);
-	tuple.append(" ");
-	tuple.append(local_ip);
-	tuple.append(":");
-	tuple.append(local_port);
-	tuple.append(" ");
-	tuple.append(remote_ip);
-	tuple.append(":");
-	tuple.append(remote_port);
+	string tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
 
 	socket_state* socket_state_;
 
@@ -467,8 +463,6 @@ bool process_packet(time_t now, string process, string direction,
 		sockets[tuple] = socket_state_;
 
 		if (!hide) sockets_order.push_front(tuple);
-
-		socket_status_update(socket_state_);
 	}
 	else
 	{
@@ -476,7 +470,7 @@ bool process_packet(time_t now, string process, string direction,
 
 		socket_state_->heartbeat = now;
 
-		packet_update_state(socket_state_, direction, fin, syn, rst, psh, ack);
+		socket_update_status(socket_state_, direction, fin, syn, rst, psh, ack);
 	}
 
 	if (packet)
@@ -502,61 +496,19 @@ bool process_packet(time_t now, string process, string direction,
 
 	mtx_sockets.unlock();
 
-	if (mode == 1)
-	{
-		socket_state* socket_state_ = new socket_state();
-		socket_state_->process = process;
-		socket_state_->protocol = protocol;
-		socket_state_->status = "PACKET";
-		socket_state_->direction = direction;
-		socket_state_->local_ip = local_ip;
-		socket_state_->local_port = local_port;
-		socket_state_->remote_ip = remote_ip;
-		socket_state_->remote_port = remote_port;
-
-		if (fin) socket_state_->flags.append("F"); else socket_state_->flags.append(" ");
-		if (syn) socket_state_->flags.append("S"); else socket_state_->flags.append(" ");
-		if (rst) socket_state_->flags.append("R"); else socket_state_->flags.append(" ");
-		if (psh) socket_state_->flags.append("P"); else socket_state_->flags.append(" ");
-		if (ack) socket_state_->flags.append("A"); else socket_state_->flags.append(" ");
-
-		if (fin || syn || rst)
-			socket_status_update(socket_state_);
-	}
-
 	return true;
 }
 
-bool process_loopback_packet(time_t now, string protocol, 
-	string client_ip, string client_port, string client_process, 
-	string server_ip, string server_port, string server_process, 
+bool process_loopback_packet(time_t now, string protocol,
+	string client_ip, string client_port, string client_process,
+	string server_ip, string server_port, string server_process,
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
 	bool packet = true)
 {
 	mtx_sockets.lock();
 
-	string out_tuple = "";
-	out_tuple.append(protocol);
-	out_tuple.append(" ");
-	out_tuple.append(client_ip);
-	out_tuple.append(":");
-	out_tuple.append(client_port);
-	out_tuple.append(" ");
-	out_tuple.append(server_ip);
-	out_tuple.append(":");
-	out_tuple.append(server_port);
-
-	string in_tuple = "";
-	in_tuple.append(protocol);
-	in_tuple.append(" ");
-	in_tuple.append(server_ip);
-	in_tuple.append(":");
-	in_tuple.append(server_port);
-	in_tuple.append(" ");
-	in_tuple.append(client_ip);
-	in_tuple.append(":");
-	in_tuple.append(client_port);
-
+	string out_tuple = protocol + " " + client_ip + ":" + client_port + " " + server_ip + ":" + server_port;
+	string in_tuple = protocol + " " + server_ip + ":" + server_port + " " + client_ip + ":" + client_port;
 
 	socket_state* socket_state_;
 
@@ -616,8 +568,6 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		if (!hide) sockets_order.push_front(out_tuple);
 
-		socket_status_update(socket_state_);
-
 		if (packet)
 		{
 			socket_state_->packets_out++;
@@ -642,8 +592,6 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		if (!hide) sockets_order.push_front(in_tuple);
 
-		socket_status_update(socket_state_);
-
 		if (packet)
 		{
 			socket_state_->packets_in++;
@@ -654,7 +602,7 @@ bool process_loopback_packet(time_t now, string protocol,
 	{
 		socket_state_ = sockets[out_tuple];
 		socket_state_->heartbeat = now;
-		packet_update_state(socket_state_, "->", fin, syn, rst, psh, ack);
+		socket_update_status(socket_state_, "->", fin, syn, rst, psh, ack);
 
 		if (packet)
 		{
@@ -666,7 +614,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		{
 			socket_state_ = sockets[in_tuple];
 			socket_state_->heartbeat = now;
-			packet_update_state(socket_state_, "<-", fin, syn, rst, psh, ack);
+			socket_update_status(socket_state_, "<-", fin, syn, rst, psh, ack);
 
 			if (packet)
 			{
@@ -693,44 +641,6 @@ bool process_loopback_packet(time_t now, string protocol,
 		sockets_order.push_front(in_tuple);
 	}
 
-	if (mode == 1)
-	{
-		string flags = "";
-		if (fin) flags.append("F"); else flags.append(" ");
-		if (syn) flags.append("S"); else flags.append(" ");
-		if (rst) flags.append("R"); else flags.append(" ");
-		if (psh) flags.append("P"); else flags.append(" ");
-		if (ack) flags.append("A"); else flags.append(" ");
-
-		socket_state* socket_state_ = new socket_state();
-		socket_state_->process = client_process;
-		socket_state_->protocol = protocol;
-		socket_state_->status = "PACKET";
-		socket_state_->direction = "->";
-		socket_state_->local_ip = client_ip;
-		socket_state_->local_port = client_port;
-		socket_state_->remote_ip = server_ip;
-		socket_state_->remote_port = server_port;
-		socket_state_->flags = flags;
-
-		if (fin || syn || rst)
-			socket_status_update(socket_state_);
-
-		socket_state_->process = server_process;
-		socket_state_->protocol = protocol;
-		socket_state_->status = "PACKET";
-		socket_state_->direction = "<-";
-		socket_state_->local_ip = server_ip;
-		socket_state_->local_port = server_port;
-		socket_state_->remote_ip = client_ip;
-		socket_state_->remote_port = client_port;
-		socket_state_->flags = flags;
-
-		if (fin || syn || rst)
-			socket_status_update(socket_state_);
-
-	}
-	
 	mtx_sockets.unlock();
 
 	return true;
@@ -951,7 +861,7 @@ bool init()
 
 			if (state.compare("") == 0 || state.compare("LISTENING") == 0)
 			{
-				processByPort_[protocol + " " + local_port] = process;
+				processByPort_[protocol + " " + local_ip + ":" + local_port] = process;
 			}
 			else
 			{
@@ -1072,12 +982,7 @@ void socket_()
 	for (ULONG i = 0; ; i++)
 	{
 		WINDIVERT_ADDRESS addr;
-		if (!WinDivertRecv(s_handle, NULL, 0, NULL, &addr))
-		{
-			// Handle recv error
-			continue;
-		}
-
+		if (!WinDivertRecv(s_handle, NULL, 0, NULL, &addr))	continue;
 		if (addr.IPv6) continue;
 
 		time_t now;
@@ -1096,7 +1001,7 @@ void socket_()
 			event = "LISTEN";
 			break;
 		case WINDIVERT_EVENT_SOCKET_CONNECT:
-			event = "CNCT";
+			event = "CONNECT";
 			break;
 		case WINDIVERT_EVENT_SOCKET_ACCEPT:
 			event = "ACCEPT";
@@ -1142,30 +1047,22 @@ void socket_()
 		WinDivertHelperFormatIPv6Address(addr.Socket.RemoteAddr, remote_str, sizeof(remote_str));
 
 		string local_ip = string(local_str);
+		if (local_ip.compare("::") == 0) local_ip = "0.0.0.0";
 		string local_port = to_string(addr.Socket.LocalPort);
 
 		string remote_ip = string(remote_str);
+		if (remote_ip.compare("::") == 0) remote_ip = "0.0.0.0";
 		string remote_port = to_string(addr.Socket.RemotePort);
 
-		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("CNCT") == 0))
+		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("CONNECT") == 0))
 		{
+			if (protocol.compare("UDP") == 0)
+				int x = 0;
+			
 			mtx_processByPort.lock();
-			processByPort_[protocol + " " + local_port] = process;
+			processByPort_[protocol + " " + local_ip + ":" + local_port] = process;
 			mtx_processByPort.unlock();
 		}
-
-		socket_state* socket_state_ = new socket_state();
-		socket_state_->process = process;
-		socket_state_->protocol = protocol;
-		socket_state_->status = event + "()";
-		socket_state_->direction = direction;
-		socket_state_->local_ip = local_ip;
-		socket_state_->local_port = local_port;
-		socket_state_->remote_ip = remote_ip;
-		socket_state_->remote_port = remote_port;
-		socket_state_->heartbeat = now;
-
-		socket_status_update(socket_state_);
 	}
 }
 
@@ -1186,22 +1083,19 @@ void network()
 	UINT payload_len;
 
 	string protocol;
+	string src_ip, dst_ip;
 	bool fin, syn, rst, psh, ack;
 	string direction;
 
-	u_short src_port, dst_port;
+	string src_port, dst_port;
 
 	time_t now;
 
 	// Main capture-modify-inject loop:
 	for (ULONG i = 0; ; i++)
 	{
-		if (!WinDivertRecv(n_handle, packet, sizeof(packet), &packet_len, &addr))
-		{
-			// Handle recv error
-			continue;
-		}
-
+		if (!WinDivertRecv(n_handle, packet, sizeof(packet), &packet_len, &addr)) continue;
+		
 		time(&now);
 
 		WinDivertHelperParsePacket(packet, packet_len, &ip_header, &ipv6_header,
@@ -1209,10 +1103,15 @@ void network()
 			&payload_len, NULL, NULL);
 
 		if (ip_header == NULL || (tcp_header == NULL && udp_header == NULL))
+		{
 			continue;
+		}
 
 		WinDivertHelperFormatIPv4Address(ntohl(ip_header->SrcAddr), src_str, sizeof(src_str));
 		WinDivertHelperFormatIPv4Address(ntohl(ip_header->DstAddr), dst_str, sizeof(dst_str));
+
+		src_ip = string(src_str);
+		dst_ip = string(dst_str);
 
 		fin = false;
 		syn = false;
@@ -1224,8 +1123,8 @@ void network()
 		{
 			protocol = "TCP";
 
-			src_port = ntohs(tcp_header->SrcPort);
-			dst_port = ntohs(tcp_header->DstPort);
+			src_port = to_string(ntohs(tcp_header->SrcPort));
+			dst_port = to_string(ntohs(tcp_header->DstPort));
 
 			fin = tcp_header->Fin;
 			syn = tcp_header->Syn;
@@ -1237,36 +1136,40 @@ void network()
 		if (udp_header != NULL)
 		{
 			protocol = "UDP";
-			src_port = ntohs(udp_header->SrcPort);
-			dst_port = ntohs(udp_header->DstPort);
+			src_port = to_string(ntohs(udp_header->SrcPort));
+			dst_port = to_string(ntohs(udp_header->DstPort));
 		}
 
 		if (addr.Loopback)
 		{
 			if (!process_loopback_packet(now, protocol,
-				string(src_str), to_string(src_port), processByPort(protocol, to_string(src_port)),
-				string(dst_str), to_string(dst_port), processByPort(protocol, to_string(dst_port)),
-				packet_len, fin, syn, rst, psh, ack)) continue;
+				src_ip, src_port, processByPort(protocol, src_ip, src_port),
+				dst_ip, dst_port, processByPort(protocol, dst_ip, dst_port),
+				packet_len, fin, syn, rst, psh, ack))
+			{
+				continue;
+			}
 		}
 		else if (addr.Outbound)
 		{
-			if (!process_packet(now, processByPort(protocol, to_string(src_port)), "->",
-				protocol, string(src_str), to_string(src_port), string(dst_str), to_string(dst_port), packet_len,
-				fin, syn, rst, psh, ack)) continue;
+			if (!process_packet(now, processByPort(protocol, src_ip, src_port), "->",
+				protocol, src_ip, src_port, dst_ip, dst_port,
+				packet_len, fin, syn, rst, psh, ack))
+			{
+				continue;
+			}
 		}
 		else
 		{
-			if (!process_packet(now, processByPort(protocol, to_string(dst_port)), "<-",
-				protocol, string(dst_str), to_string(dst_port), string(src_str), to_string(src_port), packet_len,
-				fin, syn, rst, psh, ack)) continue;
+			if (!process_packet(now, processByPort(protocol, dst_ip, dst_port), "<-",
+				protocol, dst_ip, dst_port, src_ip, src_port,
+				packet_len, fin, syn, rst, psh, ack))
+			{
+				continue;
+			}
 		}
 
-		//WinDivertHelperCalcChecksums(packet, packet_len, &addr, 0);
-		if (!WinDivertSend(n_handle, packet, packet_len, NULL, &addr))
-		{
-			// Handle send error
-			continue;
-		}
+		if (!WinDivertSend(n_handle, packet, packet_len, NULL, &addr)) continue;
 	}
 }
 
@@ -1281,50 +1184,6 @@ void heartbeat()
 		mtx_sockets.lock();
 
 		time(&now);
-
-		if (mode == 0)
-		{
-			system("cls");
-
-			CONSOLE_SCREEN_BUFFER_INFO csbi;
-			GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-			short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-
-			mtx_console.lock();
-
-			cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
-
-			size_t row = 0;
-			for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
-			{
-				if (row + 2 == (size_t)rows)
-					break;
-
-				string& tuple = *i;
-				socket_state_ = sockets[tuple];
-
-				ULONG idle = difftime(now, socket_state_->heartbeat);
-				string idle_ = idle > 999 ? "000" : to_string(idle);
-
-				cout
-					<< left
-					<< socket_state_->protocol << " "
-					<< setw(4) << socket_state_->status << " "
-					<< right
-					<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
-					<< socket_state_->direction
-					<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
-					/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
-					/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
-					<< setw(3) << idle_ << " "
-					<< left
-					<< setw(12) << truncate(socket_state_->process, 12)
-					/* << endl */;
-				row++;
-			}
-
-			mtx_console.unlock();
-		}
 
 		for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); )
 		{
@@ -1346,12 +1205,52 @@ void heartbeat()
 				{
 					socket_state_->status = "TOUT";
 					socket_state_->heartbeat = now;
-					socket_status_update(socket_state_);
 				}
 			}
 
 			i++;
 		}
+
+		system("cls");
+
+		CONSOLE_SCREEN_BUFFER_INFO csbi;
+		GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+		short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+
+		mtx_console.lock();
+
+		cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
+
+		size_t row = 0;
+		for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
+		{
+			if (row + 2 == (size_t)rows)
+				break;
+
+			string & tuple = *i;
+			socket_state_ = sockets[tuple];
+
+			ULONG idle = difftime(now, socket_state_->heartbeat);
+			string idle_ = idle > 999 ? "000" : to_string(idle);
+
+			cout
+				<< left
+				<< socket_state_->protocol << " "
+				<< setw(4) << socket_state_->status << " "
+				<< right
+				<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
+				<< socket_state_->direction
+				<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
+				/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
+				/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
+				<< setw(3) << idle_ << " "
+				<< left
+				<< setw(12) << truncate(socket_state_->process, 12)
+				/* << endl */;
+			row++;
+		}
+
+		mtx_console.unlock();
 
 		mtx_sockets.unlock();
 
