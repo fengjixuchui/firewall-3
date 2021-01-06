@@ -1,4 +1,4 @@
-firewall.exe v0.91
+firewall.exe v0.92
 ==================
 
 
@@ -49,10 +49,30 @@ Known Limitations
 
 
 
+Changes
+-------
+
+v0.92 (main)
+-----
+
+* Fixed minor memory leak
+* Added reload
+* Added refresh interval
+* Added pause refresh
+* Added quit
+
+
+
 Upcoming
 --------
 
-* Reload Rules without restarting
+* More clean up
 * Windows GUI
 * Run as Windows Service
 * Disable network while firewall is off
+* Stress Testing
+* Fix stability issue under extreme load
+* Performance Tuning
+  * enums instead of strings
+  * switch (enum)
+  * store ip addresses and subnet masks in binary

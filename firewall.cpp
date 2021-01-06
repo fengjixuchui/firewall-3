@@ -25,7 +25,7 @@ using namespace std;
 
 vector<string> split_args(string str)
 {
-	vector<string> tmp = {};
+	vector<string> tmp;
 	string arg = "";
 	for (string::size_type i = 0; i < str.size(); i++)
 	{
@@ -57,7 +57,7 @@ vector<string> split_args(string str)
 
 vector<string> split(string str, char del, bool skip_empty = false)
 {
-	vector<string> tmp = {};
+	vector<string> tmp;
 	string arg = "";
 	for (string::size_type i = 0; i < str.size(); i++)
 	{
@@ -213,10 +213,14 @@ bool ip_match(string ip, string subnet)
 #define TCP_TIMEOUT 300
 #define UDP_TIMEOUT 10
 
+UINT refresh_interval = 1;
+bool paused = false;
+
 struct socket_state
 {
 	string process = "";
 	string protocol = "";
+	bool loopback = false;
 	string local_ip = "";
 	string local_port = "";
 	string remote_ip = "";
@@ -261,13 +265,15 @@ vector<rule> in_rules = {};
 vector<rule> out_rules = {};
 vector<loopback_rule> loopback_rules = {};
 
-list<string> sockets_order;
+list<string> sockets_order = {};
 unordered_map<string, socket_state*> sockets = {};
 
-unordered_map<string, string> processByPort_;
-unordered_map<string, socket_state*> processUnknown;
+unordered_map<string, string> processByPort_ = {};
+
+time_t activestat_heartbeat = 0;
 
 mutex mtx_sockets;
+mutex mtx_rules;
 mutex mtx_processByPort;
 mutex mtx_console;
 
@@ -356,7 +362,7 @@ void socket_update_status(socket_state * socket_state_, string direction, bool f
 		}
 		else if (socket_state_->status.compare("EST") == 0)
 		{
-			if (fin && !ack)
+			if (fin)
 			{
 				if (direction.compare("->") == 0)
 				{
@@ -370,30 +376,58 @@ void socket_update_status(socket_state * socket_state_, string direction, bool f
 		}
 		else if (socket_state_->status.compare("LFIN") == 0)
 		{
-			if (direction.compare("<-") == 0 && fin && ack)
+			if (direction.compare("<-") == 0 && fin)
 			{
 				socket_state_->status = "CLSD";
 			}
 		}
 		else if (socket_state_->status.compare("RFIN") == 0)
 		{
-			if (direction.compare("->") == 0 && fin && ack)
+			if (direction.compare("->") == 0 && fin)
 			{
 				socket_state_->status = "CLSD";
 			}
 		}
 		else if (socket_state_->status.compare("CLSD") == 0)
 		{
-			if (syn && !ack)
+			if (socket_state_->direction.compare(direction) == 0 && syn && !ack)
 			{
 				socket_state_->status = "CNCT";
 			}
-			else if (socket_state_->status.compare("TOUT") == 0)
-			{
-				socket_state_->status = "EST";
-			}
+		}
+		else if (socket_state_->status.compare("TOUT") == 0)
+		{
+			socket_state_->status = "EST";
 		}
 	}
+}
+
+string socket_action(string process, string direction, string protocol, string local_ip, string local_port, string remote_ip, string remote_port)
+{
+	mtx_rules.lock();
+
+	vector<rule> table;
+	if (direction.compare("->") == 0)
+		table = out_rules;
+	else if (direction.compare("<-") == 0)
+		table = in_rules;
+
+	for (size_t i = 0; i < table.size(); i++)
+	{
+		rule rule = table[i];
+		if (rule.process.compare("*") != 0 && rule.process.compare(process) != 0) continue;
+		if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
+		if (!ip_match(local_ip, rule.local_ip)) continue;
+		if (rule.local_port.compare("*") != 0 && rule.local_port.compare(local_port) != 0) continue;
+		if (!ip_match(remote_ip, rule.remote_ip)) continue;
+		if (rule.remote_port.compare("*") != 0 && rule.remote_port.compare(remote_port) != 0) continue;
+
+		mtx_rules.unlock();
+		return rule.policy;
+	}
+
+	mtx_rules.unlock();
+	return "DROP";
 }
 
 bool process_packet(time_t now, string process, string direction,
@@ -414,31 +448,15 @@ bool process_packet(time_t now, string process, string direction,
 
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
-			vector<rule> table;
-			if (direction.compare("->") == 0)
-				table = out_rules;
-			else if (direction.compare("<-") == 0)
-				table = in_rules;
-
-			for (size_t i = 0; i < table.size(); i++)
+			string action = socket_action(process, direction, protocol, local_ip, local_port, remote_ip, remote_port);
+			if (action.compare("ACCEPT") == 0)
 			{
-				rule rule = table[i];
-				if (rule.process.compare("*") != 0 && rule.process.compare(process) != 0) continue;
-				if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
-				if (!ip_match(local_ip, rule.local_ip)) continue;
-				if (rule.local_port.compare("*") != 0 && rule.local_port.compare(local_port) != 0) continue;
-				if (!ip_match(remote_ip, rule.remote_ip)) continue;
-				if (rule.remote_port.compare("*") != 0 && rule.remote_port.compare(remote_port) != 0) continue;
-				if (rule.policy.compare("ACCEPT") == 0)
-				{
-					accept = true;
-				}
-				else if (rule.policy.compare("ACCEPT_HIDE") == 0)
-				{
-					accept = true;
-					hide = true;
-				}
-				break;
+				accept = true;
+			}
+			else if (action.compare("ACCEPT_HIDE") == 0)
+			{
+				accept = true;
+				hide = true;
 			}
 		}
 
@@ -452,6 +470,7 @@ bool process_packet(time_t now, string process, string direction,
 
 		socket_state_->process = process;
 		socket_state_->protocol = protocol;
+		socket_state_->loopback = false;
 		socket_state_->local_ip = local_ip;
 		socket_state_->local_port = local_port;
 		socket_state_->remote_ip = remote_ip;
@@ -490,13 +509,38 @@ bool process_packet(time_t now, string process, string direction,
 	list<string>::iterator i = find(sockets_order.begin(), sockets_order.end(), tuple);
 	if (i != sockets_order.end())
 	{
-		sockets_order.erase(i);
+		i = sockets_order.erase(i);
 		sockets_order.push_front(tuple);
 	}
 
 	mtx_sockets.unlock();
 
 	return true;
+}
+
+string loopback_socket_action(string protocol, string client_ip, string client_port, string client_process, string server_ip, string server_port, string server_process)
+{
+	mtx_rules.lock();
+
+	vector<loopback_rule> table = loopback_rules;
+
+	for (size_t i = 0; i < table.size(); i++)
+	{
+		loopback_rule rule = table[i];
+		if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
+		if (!ip_match(client_ip, rule.client_ip)) continue;
+		if (rule.client_port.compare("*") != 0 && rule.client_port.compare(client_port) != 0) continue;
+		if (rule.client_process.compare("*") != 0 && rule.client_process.compare(client_process) != 0) continue;
+		if (!ip_match(server_ip, rule.server_ip)) continue;
+		if (rule.server_port.compare("*") != 0 && rule.server_port.compare(server_port) != 0) continue;
+		if (rule.server_process.compare("*") != 0 && rule.server_process.compare(server_process) != 0) continue;
+		
+		mtx_rules.unlock();
+		return rule.policy;
+	}
+
+	mtx_rules.unlock();
+	return "DROP";
 }
 
 bool process_loopback_packet(time_t now, string protocol,
@@ -519,28 +563,15 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
-			vector<loopback_rule> table = loopback_rules;
-
-			for (size_t i = 0; i < table.size(); i++)
+			string action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
+			if (action.compare("ACCEPT") == 0)
 			{
-				loopback_rule rule = table[i];
-				if (rule.protocol.compare("*") != 0 && rule.protocol.compare(protocol) != 0) continue;
-				if (!ip_match(client_ip, rule.client_ip)) continue;
-				if (rule.client_port.compare("*") != 0 && rule.client_port.compare(client_port) != 0) continue;
-				if (rule.client_process.compare("*") != 0 && rule.client_process.compare(client_process) != 0) continue;
-				if (!ip_match(server_ip, rule.server_ip)) continue;
-				if (rule.server_port.compare("*") != 0 && rule.server_port.compare(server_port) != 0) continue;
-				if (rule.server_process.compare("*") != 0 && rule.server_process.compare(server_process) != 0) continue;
-				if (rule.policy.compare("ACCEPT") == 0)
-				{
-					accept = true;
-				}
-				else if (rule.policy.compare("ACCEPT_HIDE") == 0)
-				{
-					accept = true;
-					hide = true;
-				}
-				break;
+				accept = true;
+			}
+			else if (action.compare("ACCEPT_HIDE") == 0)
+			{
+				accept = true;
+				hide = true;
 			}
 		}
 
@@ -556,6 +587,7 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		socket_state_->process = client_process;
 		socket_state_->protocol = protocol;
+		socket_state_->loopback = true;
 		socket_state_->local_ip = client_ip;
 		socket_state_->local_port = client_port;
 		socket_state_->remote_ip = server_ip;
@@ -580,6 +612,7 @@ bool process_loopback_packet(time_t now, string protocol,
 
 		socket_state_->process = server_process;
 		socket_state_->protocol = protocol;
+		socket_state_->loopback = true;
 		socket_state_->local_ip = server_ip;
 		socket_state_->local_port = server_port;
 		socket_state_->remote_ip = client_ip;
@@ -646,20 +679,146 @@ bool process_loopback_packet(time_t now, string protocol,
 	return true;
 }
 
-bool init()
+
+void load_rules()
 {
-	cout << "Initializing: " << endl;
+	mtx_console.lock();
 
 
 	ifstream file;
 	string line;
 	UINT lineno;
-	bool error = false;
 
-	cout << "Loading Loopback Rules..." << endl;
+
+	for ( ; ; )
+	{
+		system("cls");
+
+		cout << endl << endl;
+
+		cout << "  VALIDATING RULE TABLES: " << endl << endl;
+
+		bool error = false;
+
+		cout << "    LOOPBACK: " << endl;
+
+		file = ifstream("loopback.txt");
+		lineno = 1;
+		while (getline(file, line))
+		{
+			vector<string> args = split_args(line);
+			if (args.size() == 0);
+			else if (args.size() == 8)
+			{
+				if (!validate_subnet(args[1]))
+				{
+					cout << "      ERROR at line " << lineno << ": Client IP is invalid" << endl;
+					error = true;
+				}
+				if (!validate_subnet(args[4]))
+				{
+					cout << "      ERROR at line " << lineno << ": Server IP is invalid" << endl;
+					error = true;
+				}
+			}
+			else
+			{
+				cout << "      ERROR at line " << lineno << ": Expected 8 arguments" << endl;
+				error = true;
+			}
+			lineno++;
+		}
+
+		cout << endl << endl;
+
+		cout << "    INBOUND: " << endl;
+
+		file = ifstream("in.txt");
+		lineno = 1;
+		while (getline(file, line))
+		{
+			vector<string> args = split_args(line);
+			if (args.size() == 0);
+			else if (args.size() == 7)
+			{
+				if (!validate_subnet(args[1]))
+				{
+					cout << "ERROR at line " << lineno << ": Local IP is invalid" << endl;
+					error = true;
+				}
+				if (!validate_subnet(args[3]))
+				{
+					cout << "ERROR at line " << lineno << ": Remote IP is invalid" << endl;
+					error = true;
+				}
+			}
+			else
+			{
+				cout << "ERROR at line " << lineno << ": Expected 7 arguments" << endl;
+				error = true;
+			}
+			lineno++;
+		}
+
+		cout << endl << endl;
+
+		cout << "    OUTBOUND:" << endl;
+
+		file = ifstream("out.txt");
+		lineno = 1;
+		while (getline(file, line))
+		{
+			vector<string> args = split_args(line);
+			if (args.size() == 0);
+			else if (args.size() == 7)
+			{
+				rule rule;
+				if (!validate_subnet(args[1]))
+				{
+					cout << "      ERROR at line " << lineno << ": Local IP is invalid" << endl;
+					error = true;
+				}
+				if (!validate_subnet(args[3]))
+				{
+					cout << "      ERROR at line " << lineno << ": Remote IP is invalid" << endl;
+					error = true;
+				}
+			}
+			else
+			{
+				cout << "      ERROR at line " << lineno << ": Expected 7 arguments" << endl;
+				error = true;
+			}
+			lineno++;
+		}
+
+		cout << endl;
+
+		if (error)
+		{
+			cout << "  FAILED!" << endl << endl;
+
+			cout << "  Fix errors and press any key...";
+			_getch();
+		}
+		else
+		{
+			cout << "  PASSED!" << endl << endl;
+			break;
+		}
+	}
+
+	cout << endl;
+
+	mtx_rules.lock();
+
+	cout << "  LOADING RULE TABLES: ";
+
+	loopback_rules.clear();
+	in_rules.clear();
+	out_rules.clear();
 
 	file = ifstream("loopback.txt");
-	lineno = 1;
 	while (getline(file, line))
 	{
 		vector<string> args = split_args(line);
@@ -668,19 +827,9 @@ bool init()
 		{
 			loopback_rule rule;
 			rule.protocol = args[0];
-			if (!validate_subnet(args[1]))
-			{
-				cout << "ERROR at line " << lineno << ": Client IP is invalid" << endl;
-				error = true;
-			}
 			rule.client_ip = args[1];
 			rule.client_port = args[2];
 			rule.client_process = args[3];
-			if (!validate_subnet(args[4]))
-			{
-				cout << "ERROR at line " << lineno << ": Server IP is invalid" << endl;
-				error = true;
-			}
 			rule.server_ip = args[4];
 			rule.server_port = args[5];
 			rule.server_process = args[6];
@@ -688,20 +837,9 @@ bool init()
 
 			loopback_rules.push_back(rule);
 		}
-		else
-		{
-			cout << "ERROR at line " << lineno << ": Expected 8 arguments" << endl;
-			error = true;
-		}
-		lineno++;
 	}
-	cout << "done" << endl;
-
-
-	cout << "Loading Incoming Rules..." << endl;
 
 	file = ifstream("in.txt");
-	lineno = 1;
 	while (getline(file, line))
 	{
 		vector<string> args = split_args(line);
@@ -710,18 +848,8 @@ bool init()
 		{
 			rule rule;
 			rule.protocol = args[0];
-			if (!validate_subnet(args[1]))
-			{
-				cout << "ERROR at line " << lineno << ": Local IP is invalid" << endl;
-				error = true;
-			}
 			rule.local_ip = args[1];
 			rule.local_port = args[2];
-			if (!validate_subnet(args[3]))
-			{
-				cout << "ERROR at line " << lineno << ": Remote IP is invalid" << endl;
-				error = true;
-			}
 			rule.remote_ip = args[3];
 			rule.remote_port = args[4];
 			rule.process = args[5];
@@ -729,21 +857,9 @@ bool init()
 
 			in_rules.push_back(rule);
 		}
-		else
-		{
-			cout << "ERROR at line " << lineno << ": Expected 7 arguments" << endl;
-			error = true;
-		}
-		lineno++;
 	}
 
-	cout << "done" << endl;
-
-
-	cout << "Loading Outgoing Rules..." << endl;
-
 	file = ifstream("out.txt");
-	lineno = 1;
 	while (getline(file, line))
 	{
 		vector<string> args = split_args(line);
@@ -752,18 +868,8 @@ bool init()
 		{
 			rule rule;
 			rule.protocol = args[0];
-			if (!validate_subnet(args[1]))
-			{
-				cout << "ERROR at line " << lineno << ": Local IP is invalid" << endl;
-				error = true;
-			}
 			rule.local_ip = args[1];
 			rule.local_port = args[2];
-			if (!validate_subnet(args[3]))
-			{
-				cout << "ERROR at line " << lineno << ": Remote IP is invalid" << endl;
-				error = true;
-			}
 			rule.remote_ip = args[3];
 			rule.remote_port = args[4];
 			rule.process = args[5];
@@ -771,19 +877,23 @@ bool init()
 
 			out_rules.push_back(rule);
 		}
-		else
-		{
-			cout << "ERROR at line " << lineno << ": Expected 7 arguments" << endl;
-			error = true;
-		}
-		lineno++;
 	}
 
-	cout << "done" << endl;
+	cout << "DONE!" << endl << endl;
 
-	if (error) return false;
+	mtx_rules.unlock();
+	
 
-	cout << "opening socket handle...";
+	mtx_console.unlock();
+}
+
+bool init()
+{
+	load_rules();
+
+
+
+	cout << "  OPENING SOCKET HANDLE: ";
 
 	s_handle = WinDivertOpen(
 		"true",
@@ -794,10 +904,11 @@ bool init()
 		return false;
 	}
 
-	cout << "done" << endl;
+	cout << "DONE!" << endl << endl;
 
 
-	cout << "opening network handle...";
+
+	cout << "  OPENING NETWORK HANDLE: ";
 
 	n_handle = WinDivertOpen(
 		"true",
@@ -808,21 +919,28 @@ bool init()
 		return false;
 	}
 
-	cout << "done" << endl;
+	cout << "DONE!" << endl << endl;
 
 
-	cout << "netstat...";
+
+	cout << "  NETSTAT -A -N -O > NETSTAT.TXT: ";
+
 	system("netstat -a -n -o > netstat.txt");
-	cout << "done" << endl;
+
+	cout << "DONE!" << endl << endl;
+
+
 
 	time_t now;
 	time(&now);
 
-	cout << "parsing netstat.txt...";
+	
+	cout << "  PARSING NETSTAT.TXT: ";
 
-	unordered_map<string, string> loopback = {};
+	unordered_map<string, string> loopback;
 
-	file = ifstream("netstat.txt");
+	ifstream file = ifstream("netstat.txt");
+	string line;
 	while (getline(file, line))
 	{
 		vector<string> args = split_args(line);
@@ -867,35 +985,16 @@ bool init()
 			{
 				if (local_ip.compare(remote_ip) == 0 || ip_match(local_ip, "127.0.0.1/8")) //loopback
 				{
-					string tuple = "";
-					tuple.append(protocol);
-					tuple.append(" ");
-					tuple.append(local_ip);
-					tuple.append(":");
-					tuple.append(local_port);
-					tuple.append(" ");
-					tuple.append(remote_ip);
-					tuple.append(":");
-					tuple.append(remote_port);
+					string out_tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
+					string in_tuple = protocol + " " + remote_ip + ":" + remote_port + " " + local_ip + ":" + local_port;
 
-					string tuple_ = "";
-					tuple_.append(protocol);
-					tuple_.append(" ");
-					tuple_.append(remote_ip);
-					tuple_.append(":");
-					tuple_.append(remote_port);
-					tuple_.append(" ");
-					tuple_.append(local_ip);
-					tuple_.append(":");
-					tuple_.append(local_port);
-
-					if (loopback.find(tuple_) == loopback.cend())
+					if (loopback.find(in_tuple) == loopback.cend())
 					{
-						loopback[tuple] = process;
+						loopback[out_tuple] = process;
 					}
 					else //match
 					{
-						string process_ = loopback[tuple_];
+						string process_ = loopback[in_tuple];
 
 						if (state.compare("ESTABLISHED") == 0 || state.compare("SYN_RECV") == 0)
 						{
@@ -916,7 +1015,7 @@ bool init()
 							}
 						}
 
-						loopback.erase(tuple_);
+						loopback.erase(in_tuple);
 					}
 				}
 				else
@@ -967,7 +1066,7 @@ bool init()
 	}
 
 
-	cout << "done" << endl;
+	cout << "DONE!" << endl << endl;
 
 	//for (unordered_map<string, string>::iterator i = loopback.begin(); i != loopback.cend(); i++)
 	//{
@@ -975,6 +1074,130 @@ bool init()
 	//}
 
 	return true;
+}
+
+void reload_rules()
+{
+	load_rules();
+
+	mtx_sockets.lock();
+
+	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); i++)
+	{
+		string tuple = i->first;
+		socket_state* socket_state_ = i->second;
+
+		if (socket_state_->loopback)
+		{
+			if (socket_state_->direction.compare("->"))
+			{
+				string out_tuple = tuple;
+				string in_tuple = socket_state_->protocol + " " + socket_state_->remote_ip + ":" + socket_state_->remote_port + " " + socket_state_->local_ip + ":" + socket_state_->local_port;
+
+				socket_state* out_socket = sockets[out_tuple];
+				socket_state* in_socket = sockets[in_tuple];
+
+				string action = loopback_socket_action(out_socket->protocol, out_socket->local_ip, out_socket->local_port, out_socket->process, in_socket->local_ip, in_socket->local_port, in_socket->process);
+
+				bool accept = false;
+				bool hide = false;
+
+				if (action.compare("ACCEPT") == 0)
+				{
+					accept = true;
+				}
+				else if (action.compare("ACCEPT_HIDE") == 0)
+				{
+					accept = true;
+					hide = true;
+				}
+
+				if (accept)
+				{
+					list<string>::iterator i;
+					if (hide)
+					{
+						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
+						if (i != sockets_order.end())
+						{
+							i = sockets_order.erase(i);
+						}
+
+						i = find(sockets_order.begin(), sockets_order.end(), in_tuple);
+						if (i != sockets_order.end())
+						{
+							i = sockets_order.erase(i);
+						}
+					}
+					else
+					{
+						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
+						if (i == sockets_order.end())
+						{
+							sockets_order.push_front(out_tuple);
+						}
+						i = find(sockets_order.begin(), sockets_order.end(), in_tuple);
+						if (i == sockets_order.end())
+						{
+							sockets_order.push_front(in_tuple);
+						}
+					}
+				}
+				else
+				{
+					sockets.erase(out_tuple);
+					sockets_order.remove(out_tuple);
+
+					sockets.erase(in_tuple);
+					sockets_order.remove(in_tuple);
+				}
+			}
+		}
+		else
+		{
+			string action = socket_action(socket_state_->process, socket_state_->direction, socket_state_->protocol, socket_state_->local_ip, socket_state_->local_port, socket_state_->remote_ip, socket_state_->remote_port);
+
+			bool accept = false;
+			bool hide = false;
+
+			if (action.compare("ACCEPT") == 0)
+			{
+				accept = true;
+			}
+			else if (action.compare("ACCEPT_HIDE") == 0)
+			{
+				accept = true;
+				hide = true;
+			}
+
+			if (accept)
+			{
+				if (hide)
+				{
+					list<string>::iterator i = find(sockets_order.begin(), sockets_order.end(), tuple);
+					if (i != sockets_order.end())
+					{
+						i = sockets_order.erase(i);
+					}
+				}
+				else
+				{
+					list<string>::iterator i = find(sockets_order.begin(), sockets_order.end(), tuple);
+					if (i == sockets_order.end())
+					{
+						sockets_order.push_front(tuple);
+					}
+				}
+			}
+			else
+			{
+				sockets.erase(tuple);
+				sockets_order.remove(tuple);
+			}
+		}
+	}
+
+	mtx_sockets.unlock();
 }
 
 void socket_()
@@ -1175,26 +1398,24 @@ void network()
 
 void heartbeat()
 {
-	string tuple;
-	socket_state* socket_state_;
-	time_t now;
-
 	for (;;)
 	{
 		mtx_sockets.lock();
 
+		time_t now;
 		time(&now);
 
 		for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); )
 		{
 			string tuple = i->first;
-			socket_state_ = i->second;
+			socket_state* socket_state_ = i->second;
 
 			if (socket_state_->status.compare("EST") != 0 &&
 				difftime(now, socket_state_->heartbeat) >= TIMEOUT)
 			{
 				sockets_order.remove(tuple);
 				i = sockets.erase(i);
+				delete socket_state_;
 				continue;
 			}
 
@@ -1211,52 +1432,83 @@ void heartbeat()
 			i++;
 		}
 
-		system("cls");
-
-		CONSOLE_SCREEN_BUFFER_INFO csbi;
-		GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-		short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-
-		mtx_console.lock();
-
-		cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
-
-		size_t row = 0;
-		for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
-		{
-			if (row + 2 == (size_t)rows)
-				break;
-
-			string & tuple = *i;
-			socket_state_ = sockets[tuple];
-
-			ULONG idle = difftime(now, socket_state_->heartbeat);
-			string idle_ = idle > 999 ? "000" : to_string(idle);
-
-			cout
-				<< left
-				<< socket_state_->protocol << " "
-				<< setw(4) << socket_state_->status << " "
-				<< right
-				<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
-				<< socket_state_->direction
-				<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
-				/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
-				/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
-				<< setw(3) << idle_ << " "
-				<< left
-				<< setw(12) << truncate(socket_state_->process, 12)
-				/* << endl */;
-			row++;
-		}
-
-		mtx_console.unlock();
-
 		mtx_sockets.unlock();
 
 		this_thread::sleep_for(chrono::seconds(1));
 	}
 }
+
+void activestat()
+{
+	for (; ; )
+	{
+		mtx_console.lock();
+
+		time_t now;
+		time(&now);
+
+		if (difftime(now, activestat_heartbeat) >= refresh_interval)
+		{
+			mtx_sockets.lock();
+
+			system("cls");
+
+			CONSOLE_SCREEN_BUFFER_INFO csbi;
+			GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
+			short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+
+			cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
+			cout << "--------------------------------------------------------------------------------";
+
+			size_t row = 0;
+			for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
+			{
+				if (row + 4 == (size_t)rows)
+					break;
+
+				string & tuple = *i;
+				socket_state * socket_state_ = sockets[tuple];
+
+				ULONG idle = difftime(now, socket_state_->heartbeat);
+				string idle_ = idle > 999 ? "000" : to_string(idle);
+
+				cout
+					<< left
+					<< socket_state_->protocol << " "
+					<< setw(4) << socket_state_->status << " "
+					<< right
+					<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
+					<< socket_state_->direction
+					<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
+					/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
+					/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
+					<< setw(3) << idle_ << " "
+					<< left
+					<< setw(12) << truncate(socket_state_->process, 12)
+					<< right
+					/* << endl */;
+				row++;
+			}
+
+			for (; row + 4 < (size_t)rows; row++)
+			{
+				cout << endl;
+			}
+
+			cout << "--------------------------------------------------------------------------------";
+			cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << refresh_interval << "s [+]   [P]AUSE   [Q]UIT";
+
+			mtx_sockets.unlock();
+
+			activestat_heartbeat = now;
+		}
+
+		mtx_console.unlock();
+
+		this_thread::sleep_for(chrono::seconds(1));
+	}
+}
+
 
 int main()
 {
@@ -1265,6 +1517,71 @@ int main()
 	thread socket_(socket_);
 	thread network(network);
 	thread heartbeat(heartbeat);
+	thread activestat(activestat);
 
-	network.join();
+	for (; ; )
+	{
+		int c = toupper(_getch());
+		switch (c)
+		{
+		case 'L':
+			reload_rules();
+			activestat_heartbeat = 0;
+			break;
+
+		case '+':
+			switch (refresh_interval)
+			{
+			case 1:
+				refresh_interval = 5;
+				break;
+			case 5:
+				refresh_interval = 15;
+				break;
+			case 15:
+				refresh_interval = 60;
+				break;
+			case 60:
+				break;
+			}
+			activestat_heartbeat = 0;
+			break;
+
+		case '-':
+			switch (refresh_interval)
+			{
+			case 1:
+				break;
+			case 5:
+				refresh_interval = 1;
+				break;
+			case 15:
+				refresh_interval = 5;
+				break;
+			case 60:
+				refresh_interval = 15;
+				break;
+			}
+			activestat_heartbeat = 0;
+			break;
+
+		case 'R':
+			activestat_heartbeat = 0;
+			break;
+
+		case 'P':
+			mtx_console.lock();
+			while (toupper(_getch()) != 'P');
+			mtx_console.unlock();
+			activestat_heartbeat = 0;
+			break;
+
+		case 'S':
+			goto exit;
+
+		}
+	}
+
+exit:;
+	exit(0);
 }
