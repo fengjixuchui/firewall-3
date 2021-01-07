@@ -209,8 +209,8 @@ bool ip_match(string ip, string subnet)
 
 #define MAXBUF 4096
 #define INET6_ADDRSTRLEN 45
-#define TIMEOUT 3
-#define TCP_TIMEOUT 300
+#define TIMEOUT 10
+#define TCP_TIMEOUT 1800
 #define UDP_TIMEOUT 10
 
 UINT refresh_interval = 1;
