@@ -1,4 +1,4 @@
-# firewall.exe v0.92
+# firewall.exe v0.93
 
 ![](screenshot.png)
 
