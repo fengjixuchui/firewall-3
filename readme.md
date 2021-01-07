@@ -13,7 +13,11 @@
 
 ## Instruction
 
-1. Edit firewall tables
+1. Edit settings
+
+* settings.txt
+
+2. Edit firewall rule tables
 
 * loopback.txt (Loopback rules)
 * out.txt (Outbound rules)
@@ -33,9 +37,9 @@ If no match is found, the default is DROP. \
 \* represents a wildcard \
 IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-2. Disable Windows Firewall
+3. Disable Windows Firewall
 
-3. Start firewall.exe
+4. Start firewall.exe
 
 
 
@@ -48,6 +52,10 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 
 ## Changes
+
+### v0.93
+
+* Added settings
 
 ### v0.92
 

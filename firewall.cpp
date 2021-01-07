@@ -207,14 +207,7 @@ bool ip_match(string ip, string subnet)
 	return ~(mask & (ip_ ^ network_)) == 0xFFFFFFFF;
 }
 
-#define MAXBUF 4096
-#define INET6_ADDRSTRLEN 45
-#define TIMEOUT 10
-#define TCP_TIMEOUT 1800
-#define UDP_TIMEOUT 10
 
-UINT refresh_interval = 1;
-bool paused = false;
 
 struct socket_state
 {
@@ -257,6 +250,16 @@ struct loopback_rule
 	string server_process;
 	string policy;
 };
+
+#define MAXBUF 4096
+#define INET6_ADDRSTRLEN 45
+
+UINT TIMEOUT = 5;
+UINT TCP_TIMEOUT = 1800;
+UINT UDP_TIMEOUT = 10;
+UINT REFRESH_INTERVAL = 1;
+
+bool paused = false;
 
 HANDLE s_handle;
 HANDLE n_handle;
@@ -696,9 +699,46 @@ void load_rules()
 
 		cout << endl << endl;
 
-		cout << "  VALIDATING RULE TABLES: " << endl << endl;
-
 		bool error = false;
+
+		cout << "  VALIDATING SETTINGS: " << endl;
+
+		file = ifstream("settings.txt");
+		lineno = 1;
+		while (getline(file, line))
+		{
+			vector<string> args = split_args(line);
+			if (args.size() == 0);
+			else if (args.size() == 2)
+			{
+				int value;
+				try
+				{
+					value = stoi(args[1]);
+					if (value < 0)
+					{
+						cout << "    ERROR at line " << lineno << ": Invalid value" << endl;
+						error = true;
+					}
+				}
+				catch (const std::exception&)
+				{
+					cout << "    ERROR at line " << lineno << ": Invalid value" << endl;
+					error = true;
+				}
+			}
+			else
+			{
+				cout << "    ERROR at line " << lineno << ": Expected 2 arguments" << endl;
+				error = true;
+			}
+			lineno++;
+		}
+
+		cout << endl;
+
+
+		cout << "  VALIDATING RULE TABLES: " << endl << endl;
 
 		cout << "    LOOPBACK: " << endl;
 
@@ -729,7 +769,7 @@ void load_rules()
 			lineno++;
 		}
 
-		cout << endl << endl;
+		cout << endl;
 
 		cout << "    INBOUND: " << endl;
 
@@ -760,7 +800,7 @@ void load_rules()
 			lineno++;
 		}
 
-		cout << endl << endl;
+		cout << endl;
 
 		cout << "    OUTBOUND:" << endl;
 
@@ -810,9 +850,27 @@ void load_rules()
 
 	cout << endl;
 
-	mtx_rules.lock();
+	cout << "  LOADING SETTINGS & RULE TABLES: ";
 
-	cout << "  LOADING RULE TABLES: ";
+
+	file = ifstream("settings.txt");
+	while (getline(file, line))
+	{
+		vector<string> args = split_args(line);
+		if (args.size() == 0);
+		else if (args.size() == 2)
+		{
+			if (args[0].compare("TIMEOUT") == 0)
+				TIMEOUT = stoi(args[1]);
+			else if (args[0].compare("TCP_TIMEOUT") == 0)
+				TCP_TIMEOUT = stoi(args[1]);
+			else if (args[0].compare("UDP_TIMEOUT") == 0)
+				UDP_TIMEOUT = stoi(args[1]);
+		}
+	}
+
+
+	mtx_rules.lock();
 
 	loopback_rules.clear();
 	in_rules.clear();
@@ -879,10 +937,9 @@ void load_rules()
 		}
 	}
 
-	cout << "DONE!" << endl << endl;
-
 	mtx_rules.unlock();
-	
+
+	cout << "DONE!" << endl << endl;
 
 	mtx_console.unlock();
 }
@@ -1447,7 +1504,7 @@ void activestat()
 		time_t now;
 		time(&now);
 
-		if (difftime(now, activestat_heartbeat) >= refresh_interval)
+		if (difftime(now, activestat_heartbeat) >= REFRESH_INTERVAL)
 		{
 			mtx_sockets.lock();
 
@@ -1496,7 +1553,7 @@ void activestat()
 			}
 
 			cout << "--------------------------------------------------------------------------------";
-			cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << refresh_interval << "s [+]   [P]AUSE   [Q]UIT";
+			cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   [Q]UIT";
 
 			mtx_sockets.unlock();
 
@@ -1530,16 +1587,16 @@ int main()
 			break;
 
 		case '+':
-			switch (refresh_interval)
+			switch (REFRESH_INTERVAL)
 			{
 			case 1:
-				refresh_interval = 5;
+				REFRESH_INTERVAL = 5;
 				break;
 			case 5:
-				refresh_interval = 15;
+				REFRESH_INTERVAL = 15;
 				break;
 			case 15:
-				refresh_interval = 60;
+				REFRESH_INTERVAL = 60;
 				break;
 			case 60:
 				break;
@@ -1548,18 +1605,18 @@ int main()
 			break;
 
 		case '-':
-			switch (refresh_interval)
+			switch (REFRESH_INTERVAL)
 			{
 			case 1:
 				break;
 			case 5:
-				refresh_interval = 1;
+				REFRESH_INTERVAL = 1;
 				break;
 			case 15:
-				refresh_interval = 5;
+				REFRESH_INTERVAL = 5;
 				break;
 			case 60:
-				refresh_interval = 15;
+				REFRESH_INTERVAL = 15;
 				break;
 			}
 			activestat_heartbeat = 0;
