@@ -1,26 +1,23 @@
-firewall.exe v0.92
-==================
+# firewall.exe v0.92
 
 ![](screenshot.png)
 
 
 
-Requirements:
--------------
+## Requirements:
 
-  WinDivert 2.2 (included)
-  https://www.reqrypt.org/windivert.html
-
+  [WinDivert 2.2](https://www.reqrypt.org/windivert.html) (included)
+  
 
 
-Instruction
------------
+
+## Instruction
 
 1. Edit firewall tables
 
-  -> loopback.txt (Loopback rules)
-  -> out.txt (Outbound rules)
-  -> in.txt (Inbound rules)
+  * loopback.txt (Loopback rules)
+  * out.txt (Outbound rules)
+  * in.txt (Inbound rules)
 
   Rules are executed in sequential order.
   The sequence is terminated on a match,
@@ -36,14 +33,13 @@ Instruction
   * represents a wildcard
   IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-2. Disable Windows Firewall
+1. Disable Windows Firewall
 
-3. Start firewall.exe
+1. Start firewall.exe
 
 
 
-Known Limitations
------------------
+## Known Limitations
 
 * Ports are not validated and treated as strings.
     "001" not equals "1"
@@ -51,11 +47,9 @@ Known Limitations
 
 
 
-Changes
--------
+## Changes
 
-v0.92 (main)
------
+### v0.92
 
 * Fixed minor memory leak
 * Added reload
@@ -65,8 +59,7 @@ v0.92 (main)
 
 
 
-Upcoming
---------
+## Upcoming
 
 * More clean up
 * Windows GUI
