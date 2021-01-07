@@ -33,9 +33,9 @@
     * \* represents a wildcard
     * IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-1. Disable Windows Firewall
+2. Disable Windows Firewall
 
-1. Start firewall.exe
+3. Start firewall.exe
 
 
 
