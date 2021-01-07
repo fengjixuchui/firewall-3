@@ -48,6 +48,7 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Ports are not validated and treated as strings.
     "001" not equals "1"
 * Invalid action defaults to DROP
+* Only supports TCP and UDP. IPv6 and other protocols are dropped
 
 
 
@@ -56,6 +57,8 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 ### v0.93
 
 * Added settings
+* Added logging mode
+* Added colours to UI
 
 ### v0.92
 

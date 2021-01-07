@@ -14,6 +14,8 @@
 
 #include <conio.h>
 
+#include <ctime>
+
 #include "windivert.h"
 
 using namespace std;
@@ -258,11 +260,12 @@ UINT TIMEOUT = 5;
 UINT TCP_TIMEOUT = 1800;
 UINT UDP_TIMEOUT = 10;
 UINT REFRESH_INTERVAL = 1;
-
+int mode = 0;
 bool paused = false;
 
 HANDLE s_handle;
 HANDLE n_handle;
+HANDLE console;
 
 vector<rule> in_rules = {};
 vector<rule> out_rules = {};
@@ -279,6 +282,52 @@ mutex mtx_sockets;
 mutex mtx_rules;
 mutex mtx_processByPort;
 mutex mtx_console;
+mutex mtx_queued;
+
+void log_(time_t timestamp, string protocol, string direction,
+	string local_ip, string local_port,
+	string remote_ip, string remote_port, 
+	string process,
+	string action)
+{
+	if (mode == 1)
+	{
+		struct tm timestamp_;
+		localtime_s(&timestamp_, &timestamp);
+
+		char timestamp_f[21];
+		strftime(timestamp_f, 21, "%H:%M:%S", &timestamp_);
+
+		if (action.compare("ACCEPT") == 0);
+		else if (action.compare("ACCEPT_HIDE") == 0)
+			action = "ACCEPT";
+		else
+			action = "DROP";
+
+		mtx_console.lock();
+
+		if (action.compare("ACCEPT"))
+			SetConsoleTextAttribute(console, 12);
+		else
+			SetConsoleTextAttribute(console, 10);
+
+		cout
+			<< left
+			<< timestamp_f << " "
+			<< setw(12) << truncate(process, 12) << " "
+			<< protocol << " "
+			<< right
+			<< format_ip(local_ip) << ":" << setw(5) << local_port
+			<< direction
+			<< format_ip(remote_ip) << ":" << setw(5) << remote_port << " "
+			<< action
+			<< right << endl;
+
+		SetConsoleTextAttribute(console, 15);
+
+		mtx_console.unlock();
+	}
+}
 
 string processById(DWORD id)
 {
@@ -452,6 +501,9 @@ bool process_packet(time_t now, string process, string direction,
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
 			string action = socket_action(process, direction, protocol, local_ip, local_port, remote_ip, remote_port);
+
+			log_(now, protocol, direction, local_ip, local_port,  remote_ip, remote_port, process, action);
+
 			if (action.compare("ACCEPT") == 0)
 			{
 				accept = true;
@@ -567,6 +619,10 @@ bool process_loopback_packet(time_t now, string protocol,
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
 			string action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
+
+			log_(now, protocol, "->", client_ip, client_port, server_ip, server_port, client_process, action);
+			log_(now, protocol, "<-", server_ip, server_port, client_ip, client_port, server_process, action);
+
 			if (action.compare("ACCEPT") == 0)
 			{
 				accept = true;
@@ -1265,6 +1321,8 @@ void socket_()
 		if (!WinDivertRecv(s_handle, NULL, 0, NULL, &addr))	continue;
 		if (addr.IPv6) continue;
 
+		mtx_queued.lock();
+
 		time_t now;
 
 		time(&now);
@@ -1343,6 +1401,9 @@ void socket_()
 			processByPort_[protocol + " " + local_ip + ":" + local_port] = process;
 			mtx_processByPort.unlock();
 		}
+
+	cont:
+		mtx_queued.unlock();
 	}
 }
 
@@ -1371,11 +1432,12 @@ void network()
 
 	time_t now;
 
-	// Main capture-modify-inject loop:
 	for (ULONG i = 0; ; i++)
 	{
 		if (!WinDivertRecv(n_handle, packet, sizeof(packet), &packet_len, &addr)) continue;
-		
+
+		mtx_queued.lock();
+
 		time(&now);
 
 		WinDivertHelperParsePacket(packet, packet_len, &ip_header, &ipv6_header,
@@ -1384,7 +1446,7 @@ void network()
 
 		if (ip_header == NULL || (tcp_header == NULL && udp_header == NULL))
 		{
-			continue;
+			goto cont;
 		}
 
 		WinDivertHelperFormatIPv4Address(ntohl(ip_header->SrcAddr), src_str, sizeof(src_str));
@@ -1427,7 +1489,7 @@ void network()
 				dst_ip, dst_port, processByPort(protocol, dst_ip, dst_port),
 				packet_len, fin, syn, rst, psh, ack))
 			{
-				continue;
+				goto cont;
 			}
 		}
 		else if (addr.Outbound)
@@ -1436,7 +1498,7 @@ void network()
 				protocol, src_ip, src_port, dst_ip, dst_port,
 				packet_len, fin, syn, rst, psh, ack))
 			{
-				continue;
+				goto cont;
 			}
 		}
 		else
@@ -1445,11 +1507,14 @@ void network()
 				protocol, dst_ip, dst_port, src_ip, src_port,
 				packet_len, fin, syn, rst, psh, ack))
 			{
-				continue;
+				goto cont;
 			}
 		}
 
-		if (!WinDivertSend(n_handle, packet, packet_len, NULL, &addr)) continue;
+		WinDivertSend(n_handle, packet, packet_len, NULL, &addr);
+
+	cont:
+		mtx_queued.unlock();
 	}
 }
 
@@ -1499,76 +1564,89 @@ void activestat()
 {
 	for (; ; )
 	{
-		mtx_console.lock();
-
-		time_t now;
-		time(&now);
-
-		if (difftime(now, activestat_heartbeat) >= REFRESH_INTERVAL)
+		if (mode == 0)
 		{
-			mtx_sockets.lock();
+			mtx_console.lock();
 
-			system("cls");
+			time_t now;
+			time(&now);
 
-			CONSOLE_SCREEN_BUFFER_INFO csbi;
-			GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
-			short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-
-			cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl;
-			cout << "--------------------------------------------------------------------------------";
-
-			size_t row = 0;
-			for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
+			if (difftime(now, activestat_heartbeat) >= REFRESH_INTERVAL)
 			{
-				if (row + 4 == (size_t)rows)
-					break;
+				mtx_sockets.lock();
 
-				string & tuple = *i;
-				socket_state * socket_state_ = sockets[tuple];
+				system("cls");
 
-				ULONG idle = difftime(now, socket_state_->heartbeat);
-				string idle_ = idle > 999 ? "000" : to_string(idle);
+				CONSOLE_SCREEN_BUFFER_INFO csbi;
+				GetConsoleScreenBufferInfo(console, &csbi);
+				short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
 
-				cout
-					<< left
-					<< socket_state_->protocol << " "
-					<< setw(4) << socket_state_->status << " "
-					<< right
-					<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
-					<< socket_state_->direction
-					<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
-					/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
-					/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
-					<< setw(3) << idle_ << " "
-					<< left
-					<< setw(12) << truncate(socket_state_->process, 12)
-					<< right
-					/* << endl */;
-				row++;
+				SetConsoleTextAttribute(console, 31);
+				cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS     ";
+
+				size_t row = 0;
+				for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
+				{
+					if (row + 2 == (size_t)rows)
+						break;
+
+					string & tuple = *i;
+					socket_state * socket_state_ = sockets[tuple];
+
+					ULONG idle = difftime(now, socket_state_->heartbeat);
+					string idle_ = idle > 999 ? "000" : to_string(idle);
+
+					if (socket_state_->status.compare("CNCT") == 0)
+						SetConsoleTextAttribute(console, 14);
+					else if (socket_state_->status.compare("EST") == 0)
+						SetConsoleTextAttribute(console, 10);
+					else
+						SetConsoleTextAttribute(console, 12);
+
+					cout
+						<< left
+						<< socket_state_->protocol << " "
+						<< setw(4) << socket_state_->status << " "
+						<< right
+						<< format_ip(socket_state_->local_ip) << ":" << setw(5) << socket_state_->local_port
+						<< socket_state_->direction
+						<< format_ip(socket_state_->remote_ip) << ":" << setw(5) << socket_state_->remote_port << " "
+						/* << setw(4) << format(socket_state_->packets_in) << " " */ << setw(4) << format(socket_state_->bytes_in) << " "
+						/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
+						<< setw(3) << idle_ << " "
+						<< left
+						<< setw(12) << truncate(socket_state_->process, 12)
+						<< right
+						/* << endl */;
+					row++;
+				}
+
+				for (; row + 2 < (size_t)rows; row++)
+				{
+					cout << endl;
+				}
+
+				SetConsoleTextAttribute(console, 31);
+				cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   LO[G]   [Q]UIT                   ";
+
+				mtx_sockets.unlock();
+
+				activestat_heartbeat = now;
+
+				SetConsoleTextAttribute(console, 15);
 			}
 
-			for (; row + 4 < (size_t)rows; row++)
-			{
-				cout << endl;
-			}
-
-			cout << "--------------------------------------------------------------------------------";
-			cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   [Q]UIT";
-
-			mtx_sockets.unlock();
-
-			activestat_heartbeat = now;
+			mtx_console.unlock();
 		}
-
-		mtx_console.unlock();
 
 		this_thread::sleep_for(chrono::seconds(1));
 	}
 }
 
-
 int main()
 {
+	console = GetStdHandle(STD_OUTPUT_HANDLE);
+
 	if (!init()) return 1;
 
 	thread socket_(socket_);
@@ -1627,10 +1705,41 @@ int main()
 			break;
 
 		case 'P':
+			
 			mtx_console.lock();
+
+			SetConsoleTextAttribute(console, 31);
+			cout << "\rPAUSED: PRESS [P] AGAIN TO CONTINUE                                            ";
+			SetConsoleTextAttribute(console, 15);
+
 			while (toupper(_getch()) != 'P');
+
 			mtx_console.unlock();
+
 			activestat_heartbeat = 0;
+
+			break;
+
+		case 'G':
+
+			mode = 1;
+
+			mtx_console.lock();
+
+			system("cls");
+
+			SetConsoleTextAttribute(console, 31);
+			cout << "LOGGING: PRESS [G] AGAIN TO RETURN                                              ";
+			SetConsoleTextAttribute(console, 15);
+
+			mtx_console.unlock();
+
+			while (toupper(_getch()) != 'G');
+
+			activestat_heartbeat = 0;
+
+			mode = 0;
+
 			break;
 
 		case 'S':
