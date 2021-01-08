@@ -59,6 +59,10 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Added settings
 * Added logging mode
 * Added colours to UI
+* Added mutex to socket and network handles
+* Added disable winfirewall on open
+* Added enable winfirewall on close
+
 
 ### v0.92
 

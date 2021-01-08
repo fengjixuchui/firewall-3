@@ -16,7 +16,13 @@
 
 #include <ctime>
 
+#include <windows.h>
+#include <stdio.h>
+#include <netfw.h>
+
 #include "windivert.h"
+
+#pragma comment( lib, "ole32.lib" )
 
 using namespace std;
 
@@ -24,6 +30,70 @@ using namespace std;
 #define ntohl(x)            WinDivertHelperNtohl(x)
 #define htons(x)            WinDivertHelperHtons(x)
 #define htonl(x)            WinDivertHelperHtonl(x)
+
+
+HRESULT WFCOMInitialize(INetFwPolicy2** ppNetFwPolicy2)
+{
+	HRESULT hr = S_OK;
+
+	hr = CoCreateInstance(
+		__uuidof(NetFwPolicy2),
+		NULL,
+		CLSCTX_INPROC_SERVER,
+		__uuidof(INetFwPolicy2),
+		(void**)ppNetFwPolicy2);
+
+	if (FAILED(hr))
+	{
+		goto Cleanup;
+	}
+
+Cleanup:
+	return hr;
+}
+
+int winfw(bool enable)
+{
+	HRESULT hrComInit = S_OK;
+	HRESULT hr = S_OK;
+
+	INetFwPolicy2* pNetFwPolicy2 = NULL;
+
+	hrComInit = CoInitializeEx(0, COINIT_APARTMENTTHREADED);
+
+	if (hrComInit != RPC_E_CHANGED_MODE)
+	{
+		if (FAILED(hrComInit))
+		{
+			goto Cleanup;
+		}
+	}
+
+	hr = WFCOMInitialize(&pNetFwPolicy2);
+	if (FAILED(hr))
+	{
+		goto Cleanup;
+	}
+
+	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_DOMAIN, enable);
+	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PRIVATE, enable);
+	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PUBLIC, enable);
+
+Cleanup:
+
+	if (pNetFwPolicy2 != NULL)
+	{
+		pNetFwPolicy2->Release();
+	}
+
+	if (SUCCEEDED(hrComInit))
+	{
+		CoUninitialize();
+	}
+
+	return 0;
+}
+
 
 vector<string> split_args(string str)
 {
@@ -1036,6 +1106,14 @@ bool init()
 
 
 
+	cout << "  DISABLING WINDOWS FIREWALL: ";
+
+	winfw(false);
+
+	cout << "DONE!" << endl << endl;
+
+
+
 	cout << "  NETSTAT -A -N -O > NETSTAT.TXT: ";
 
 	system("netstat -a -n -o > netstat.txt");
@@ -1643,8 +1721,47 @@ void activestat()
 	}
 }
 
+void quit()
+{
+	mtx_console.lock();
+
+	system("cls");
+
+	cout << endl << endl;
+
+	cout << "  ENABLING WINDOWS FIREWALL: ";
+
+	winfw(true);
+
+	cout << "DONE!";
+
+	cout << endl << endl;
+
+	mtx_console.unlock();
+}
+
+
+BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
+{
+	switch (fdwCtrlType)
+	{
+	case CTRL_C_EVENT:
+	case CTRL_CLOSE_EVENT:
+	case CTRL_BREAK_EVENT:
+	case CTRL_LOGOFF_EVENT:
+	case CTRL_SHUTDOWN_EVENT:
+		quit();
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+
 int main()
 {
+	SetConsoleCtrlHandler(CtrlHandler, TRUE);
+
 	console = GetStdHandle(STD_OUTPUT_HANDLE);
 
 	if (!init()) return 1;
@@ -1742,12 +1859,16 @@ int main()
 
 			break;
 
-		case 'S':
+		case 'Q':
+
+			quit();
+
 			goto exit;
 
 		}
 	}
 
 exit:;
+	
 	exit(0);
 }
