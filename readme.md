@@ -37,16 +37,13 @@ If no match is found, the default is DROP. \
 \* represents a wildcard \
 IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-3. Disable Windows Firewall
-
-4. Start firewall.exe
+3. Start firewall.exe
 
 
 
 ## Known Limitations
 
-* Ports are not validated and treated as strings.
-    "001" not equals "1"
+* Ports are not validated and treated as strings. "001" not equals "1"
 * Invalid action defaults to DROP
 * Only supports TCP and UDP. IPv6 and other protocols are dropped
 
@@ -60,8 +57,8 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Added logging mode
 * Added colours to UI
 * Added mutex to socket and network handles
-* Added disable winfirewall on open
-* Added enable winfirewall on close
+* Added auto-disable Windows Firewall on open
+* Added auto-enable Windows Firewall on close
 
 
 ### v0.92
