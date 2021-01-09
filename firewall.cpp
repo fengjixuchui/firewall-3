@@ -52,6 +52,8 @@ Cleanup:
 	return hr;
 }
 
+VARIANT_BOOL fw_domain, fw_private, fw_public;
+
 int winfw(bool enable)
 {
 	HRESULT hrComInit = S_OK;
@@ -75,9 +77,22 @@ int winfw(bool enable)
 		goto Cleanup;
 	}
 
-	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_DOMAIN, enable);
-	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PRIVATE, enable);
-	hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PUBLIC, enable);
+	if (enable)
+	{
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_DOMAIN, fw_domain);
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PRIVATE, fw_private);
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PUBLIC, fw_public);
+	}
+	else
+	{
+		pNetFwPolicy2->get_FirewallEnabled(NET_FW_PROFILE2_DOMAIN, &fw_domain);
+		pNetFwPolicy2->get_FirewallEnabled(NET_FW_PROFILE2_PRIVATE, &fw_private);
+		pNetFwPolicy2->get_FirewallEnabled(NET_FW_PROFILE2_PUBLIC, &fw_public);
+
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_DOMAIN, FALSE);
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PRIVATE, FALSE);
+		hr = pNetFwPolicy2->put_FirewallEnabled(NET_FW_PROFILE2_PUBLIC, FALSE);
+	}
 
 Cleanup:
 
@@ -376,6 +391,12 @@ void log_(time_t timestamp, string protocol, string direction,
 
 		mtx_console.lock();
 
+		CONSOLE_SCREEN_BUFFER_INFO csbi;
+		GetConsoleScreenBufferInfo(console, &csbi);
+		short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+		short columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+
+
 		if (action.compare("ACCEPT"))
 			SetConsoleTextAttribute(console, 12);
 		else
@@ -384,14 +405,15 @@ void log_(time_t timestamp, string protocol, string direction,
 		cout
 			<< left
 			<< timestamp_f << " "
-			<< setw(12) << truncate(process, 12) << " "
 			<< protocol << " "
 			<< right
 			<< format_ip(local_ip) << ":" << setw(5) << local_port
 			<< direction
 			<< format_ip(remote_ip) << ":" << setw(5) << remote_port << " "
-			<< action
-			<< right << endl;
+			<< left
+			<< setw(6) << action << " "
+			<< setw((streamsize)columns - 65) << truncate(process, (streamsize)columns - 65)
+			<< right;
 
 		SetConsoleTextAttribute(console, 15);
 
@@ -809,22 +831,14 @@ bool process_loopback_packet(time_t now, string protocol,
 }
 
 
-void load_rules()
+void load()
 {
-	mtx_console.lock();
-
-
 	ifstream file;
 	string line;
 	UINT lineno;
 
-
 	for ( ; ; )
 	{
-		system("cls");
-
-		cout << endl << endl;
-
 		bool error = false;
 
 		cout << "  VALIDATING SETTINGS: " << endl;
@@ -1066,15 +1080,15 @@ void load_rules()
 	mtx_rules.unlock();
 
 	cout << "DONE!" << endl << endl;
-
-	mtx_console.unlock();
 }
 
 bool init()
 {
-	load_rules();
+	system("cls");
 
+	cout << endl << endl;
 
+	load();
 
 	cout << "  OPENING SOCKET HANDLE: ";
 
@@ -1256,20 +1270,22 @@ bool init()
 		}
 	}
 
-
 	cout << "DONE!" << endl << endl;
-
-	//for (unordered_map<string, string>::iterator i = loopback.begin(); i != loopback.cend(); i++)
-	//{
-	//	cout << i->first << " " << i->second << endl;
-	//}
 
 	return true;
 }
 
-void reload_rules()
+void reload()
 {
-	load_rules();
+	mtx_console.lock();
+
+	system("cls");
+
+	cout << endl << endl;
+
+	load();
+
+	cout << "  APPLYING NEW RULES: ";
 
 	mtx_sockets.lock();
 
@@ -1389,6 +1405,10 @@ void reload_rules()
 	}
 
 	mtx_sockets.unlock();
+
+	cout << "DONE!" << endl << endl;
+
+	mtx_console.unlock();
 }
 
 void socket_()
@@ -1642,7 +1662,7 @@ void activestat()
 {
 	for (; ; )
 	{
-		if (mode == 0)
+		if (mode == 0 && !paused)
 		{
 			mtx_console.lock();
 
@@ -1658,9 +1678,13 @@ void activestat()
 				CONSOLE_SCREEN_BUFFER_INFO csbi;
 				GetConsoleScreenBufferInfo(console, &csbi);
 				short rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+				short columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
 				SetConsoleTextAttribute(console, 31);
-				cout << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS     ";
+				cout 
+					<< left
+					<< setw(columns) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS"
+					<< right;
 
 				size_t row = 0;
 				for (list<string>::iterator i = sockets_order.begin(); i != sockets_order.end(); i++)
@@ -1693,7 +1717,7 @@ void activestat()
 						/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
 						<< setw(3) << idle_ << " "
 						<< left
-						<< setw(12) << truncate(socket_state_->process, 12)
+						<< setw((streamsize)columns - 68) << truncate(socket_state_->process, (streamsize)columns - 68)
 						<< right
 						/* << endl */;
 					row++;
@@ -1705,7 +1729,7 @@ void activestat()
 				}
 
 				SetConsoleTextAttribute(console, 31);
-				cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   LO[G]   [Q]UIT                   ";
+				cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   LO[G]   LEGEN[D]   [Q]UIT" << setw((streamsize)columns - 72) << "";
 
 				mtx_sockets.unlock();
 
@@ -1721,6 +1745,47 @@ void activestat()
 	}
 }
 
+void legend()
+{
+	mtx_console.lock();
+
+	system("cls");
+
+	cout << endl << endl;
+
+	SetConsoleTextAttribute(console, 15);
+	cout << "  LEGEND:" << endl << endl;
+
+	SetConsoleTextAttribute(console, 15);
+	cout << "    ACTIVE STAT:" << endl << endl;
+
+	SetConsoleTextAttribute(console, 14);
+	cout << "      CNCT: Connecting" << endl << endl;
+
+	SetConsoleTextAttribute(console, 10);
+	cout << "      EST : Established" << endl << endl;
+
+	SetConsoleTextAttribute(console, 12);
+	cout << "      CLSD: Closed" << endl << endl;
+	cout << "      TOUT: Timed-out" << endl << endl;
+
+	SetConsoleTextAttribute(console, 15);
+	cout << "    LOGGING:" << endl << endl;
+
+	SetConsoleTextAttribute(console, 10);
+	cout << "      ACCEPTED" << endl << endl;
+
+	SetConsoleTextAttribute(console, 12);
+	cout << "      DROPPED" << endl << endl;
+
+	SetConsoleTextAttribute(console, 15);
+	cout << "  PRESS [D] AGAIN TO RETURN" << endl << endl;
+
+	mtx_console.unlock();
+
+	while (toupper(_getch()) != 'D');
+}
+
 void quit()
 {
 	mtx_console.lock();
@@ -1729,13 +1794,11 @@ void quit()
 
 	cout << endl << endl;
 
-	cout << "  ENABLING WINDOWS FIREWALL: ";
+	cout << "  RE-ENABLING WINDOWS FIREWALL: ";
 
 	winfw(true);
 
-	cout << "DONE!";
-
-	cout << endl << endl;
+	cout << "DONE!" << endl << endl;
 
 	mtx_console.unlock();
 }
@@ -1771,13 +1834,16 @@ int main()
 	thread heartbeat(heartbeat);
 	thread activestat(activestat);
 
+	CONSOLE_SCREEN_BUFFER_INFO csbi;
+	short rows, columns;
+
 	for (; ; )
 	{
 		int c = toupper(_getch());
 		switch (c)
 		{
 		case 'L':
-			reload_rules();
+			reload();
 			activestat_heartbeat = 0;
 			break;
 
@@ -1823,17 +1889,25 @@ int main()
 
 		case 'P':
 			
+			paused = true;
+
 			mtx_console.lock();
 
-			SetConsoleTextAttribute(console, 31);
-			cout << "\rPAUSED: PRESS [P] AGAIN TO CONTINUE                                            ";
-			SetConsoleTextAttribute(console, 15);
+			GetConsoleScreenBufferInfo(console, &csbi);
+			rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+			columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
-			while (toupper(_getch()) != 'P');
+			SetConsoleTextAttribute(console, 31);
+			cout << "\r" << left << setw((streamsize)columns - 1) << "PAUSED: PRESS [P] AGAIN TO CONTINUE" << right;
+			SetConsoleTextAttribute(console, 15);
 
 			mtx_console.unlock();
 
+			while (toupper(_getch()) != 'P');
+
 			activestat_heartbeat = 0;
+
+			paused = false;
 
 			break;
 
@@ -1845,13 +1919,29 @@ int main()
 
 			system("cls");
 
+			GetConsoleScreenBufferInfo(console, &csbi);
+			rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+			columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+
 			SetConsoleTextAttribute(console, 31);
-			cout << "LOGGING: PRESS [G] AGAIN TO RETURN                                              ";
+			cout << left << setw((streamsize)columns) << "LOGGING: PRESS [G] AGAIN TO RETURN" << right;
 			SetConsoleTextAttribute(console, 15);
 
 			mtx_console.unlock();
 
 			while (toupper(_getch()) != 'G');
+
+			activestat_heartbeat = 0;
+
+			mode = 0;
+
+			break;
+
+		case 'D':
+
+			mode = -1;
+
+			legend();
 
 			activestat_heartbeat = 0;
 

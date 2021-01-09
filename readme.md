@@ -45,7 +45,7 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 * Ports are not validated and treated as strings. "001" not equals "1"
 * Invalid action defaults to DROP
-* Only supports TCP and UDP. IPv6 and other protocols are dropped
+* Only supports TCP and UDP. IPv6, ICMP and other protocols are dropped
 
 
 
@@ -57,9 +57,10 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Added logging mode
 * Added colours to UI
 * Added mutex to socket and network handles
-* Added auto-disable Windows Firewall on open
-* Added auto-enable Windows Firewall on close
-
+* Added auto-disable Windows Firewall
+* Added re-enable Windows Firewall on close
+* Added legend
+* Fixed display issues on console columns not equal 80
 
 ### v0.92
 
@@ -76,7 +77,6 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * More clean up
 * Windows GUI
 * Run as Windows Service
-* Disable network while firewall is off
 * Stress Testing
 * Fix stability issue under extreme load
 * Performance Tuning
