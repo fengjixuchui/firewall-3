@@ -495,7 +495,14 @@ void socket_update_status(socket_state * socket_state_, string direction, bool f
 	{
 		if (rst)
 		{
-			socket_state_->status = "RST";
+			if (direction.compare("->") == 0)
+			{
+				socket_state_->status = "LRST";
+			}
+			else if (direction.compare("<-") == 0)
+			{
+				socket_state_->status = "RRST";
+			}
 		}
 		else if (socket_state_->status.compare("CNCT") == 0)
 		{
@@ -1703,7 +1710,7 @@ void activestat()
 					else if (socket_state_->status.compare("EST") == 0)
 						SetConsoleTextAttribute(console, 10);
 					else
-						SetConsoleTextAttribute(console, 12);
+						SetConsoleTextAttribute(console, 9);
 
 					cout
 						<< left
@@ -1765,9 +1772,13 @@ void legend()
 	SetConsoleTextAttribute(console, 10);
 	cout << "      EST : Established" << endl << endl;
 
-	SetConsoleTextAttribute(console, 12);
-	cout << "      CLSD: Closed" << endl << endl;
-	cout << "      TOUT: Timed-out" << endl << endl;
+	SetConsoleTextAttribute(console, 9);
+	cout << "      LFIN: FIN Sent" << endl;
+	cout << "      RFIN: FIN Received" << endl;
+	cout << "      CLSD: Closed" << endl;
+	cout << "      LRST: RST Sent" << endl;
+	cout << "      RRST: RST Received" << endl;
+	cout << "      TOUT: Inactivity Time-out" << endl << endl;
 
 	SetConsoleTextAttribute(console, 15);
 	cout << "    LOGGING:" << endl << endl;

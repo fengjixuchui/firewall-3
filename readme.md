@@ -37,7 +37,7 @@ If no match is found, the default is DROP. \
 \* represents a wildcard \
 IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-3. Start firewall.exe
+3. Run firewall.exe as Administrator
 
 
 
@@ -57,10 +57,10 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Added logging mode
 * Added colours to UI
 * Added mutex to socket and network handles
-* Added auto-disable Windows Firewall
-* Added re-enable Windows Firewall on close
+* Added disable Windows Firewall on startup
+* Added restore Windows Firewall on close
 * Added legend
-* Fixed display issues on console columns not equal 80
+* Fixed display issues
 
 ### v0.92
 
