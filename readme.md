@@ -6,7 +6,7 @@
 
 ## Requirements:
 
-  [WinDivert 2.2](https://www.reqrypt.org/windivert.html) (included)
+  [WinDivert 2.2](https://www.reqrypt.org/windivert.html) (included)\
   [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017 and 2019 (x86)](https://aka.ms/vs/16/release/vc_redist.x86.exe) (download)
 
 
