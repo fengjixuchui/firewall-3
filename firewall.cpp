@@ -8,7 +8,7 @@
 #include <psapi.h>
 #include <shlwapi.h>
 
-#include <algorithm> 
+#include <algorithm>
 #include <cctype>
 #include <locale>
 
@@ -465,7 +465,7 @@ string processByPort(string protocol, string ip, string port)
 	{
 		process = processByPort_[tuple1];
 	}
-	else if (processByPort_.find(tuple2)!= processByPort_.cend())
+	else if (processByPort_.find(tuple2) != processByPort_.cend())
 	{
 		process = processByPort_[tuple2];
 	}
@@ -1296,7 +1296,7 @@ void reload()
 
 	mtx_sockets.lock();
 
-	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); i++)
+	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); i++)
 	{
 		string tuple = i->first;
 		socket_state* socket_state_ = i->second;
@@ -1497,15 +1497,18 @@ void socket_()
 		if (remote_ip.compare("::") == 0) remote_ip = "0.0.0.0";
 		string remote_port = to_string(addr.Socket.RemotePort);
 
-		log_(now, protocol, direction, local_ip, local_port, remote_ip, remote_port, process, event);
+		//log_(now, protocol, direction, local_ip, local_port, remote_ip, remote_port, process, event);
 
 		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("CONNECT") == 0))
 		{
-			if (protocol.compare("UDP") == 0)
-				int x = 0;
-			
 			mtx_processByPort.lock();
 			processByPort_[protocol + " " + local_ip + ":" + local_port] = process;
+			mtx_processByPort.unlock();
+		}
+		else if (event.compare("CLOSE") == 0 && remote_ip.compare("0.0.0.0") == 0 && remote_port.compare("0") == 0)
+		{
+			mtx_processByPort.lock();
+			processByPort_.erase(protocol + " " + local_ip + ":" + local_port);
 			mtx_processByPort.unlock();
 		}
 
@@ -1634,7 +1637,7 @@ void heartbeat()
 		time_t now;
 		time(&now);
 
-		for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.cend(); )
+		for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); )
 		{
 			string tuple = i->first;
 			socket_state* socket_state_ = i->second;
@@ -1827,7 +1830,7 @@ BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
 	case CTRL_LOGOFF_EVENT:
 	case CTRL_SHUTDOWN_EVENT:
 		quit();
-		return TRUE;
+		return FALSE;
 	default:
 		return FALSE;
 	}
