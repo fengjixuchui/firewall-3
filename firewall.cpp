@@ -386,8 +386,8 @@ void log_(time_t timestamp, string protocol, string direction,
 		if (action.compare("ACCEPT") == 0);
 		else if (action.compare("ACCEPT_HIDE") == 0)
 			action = "ACCEPT";
-		else
-			action = "DROP";
+		//else
+		//	action = "DROP";
 
 		mtx_console.lock();
 
@@ -397,22 +397,25 @@ void log_(time_t timestamp, string protocol, string direction,
 		short columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
 
-		if (action.compare("ACCEPT"))
-			SetConsoleTextAttribute(console, 12);
-		else
+		if (action.compare("ACCEPT") == 0)
 			SetConsoleTextAttribute(console, 10);
+		else if (action.compare("DROP") == 0)
+			SetConsoleTextAttribute(console, 12);
+		//else
+		//	action = "DROP";
 
 		cout
 			<< left
 			<< timestamp_f << " "
-			<< protocol << " "
+			<< setw(6) << protocol << " "
 			<< right
 			<< format_ip(local_ip) << ":" << setw(5) << local_port
 			<< direction
 			<< format_ip(remote_ip) << ":" << setw(5) << remote_port << " "
 			<< left
-			<< setw(6) << action << " "
-			<< setw((streamsize)columns - 65) << truncate(process, (streamsize)columns - 65)
+			<< setw(7) << action << " "
+			<< setw((streamsize)columns - 70) << truncate(process, (streamsize)columns - 70)
+			<< endl
 			<< right;
 
 		SetConsoleTextAttribute(console, 15);
@@ -451,9 +454,6 @@ string processById(DWORD id)
 
 string processByPort(string protocol, string ip, string port)
 {
-	if (protocol.compare("UDP") == 0)
-		int x = 0;
-
 	string tuple1 = protocol + " " + ip + ":" + port;
 	string tuple2 = protocol + " 0.0.0.0:" + port;
 
@@ -1497,6 +1497,8 @@ void socket_()
 		if (remote_ip.compare("::") == 0) remote_ip = "0.0.0.0";
 		string remote_port = to_string(addr.Socket.RemotePort);
 
+		log_(now, protocol, direction, local_ip, local_port, remote_ip, remote_port, process, event);
+
 		if (event.compare("BIND") == 0 || (addr.Loopback && event.compare("CONNECT") == 0))
 		{
 			if (protocol.compare("UDP") == 0)
@@ -1690,7 +1692,7 @@ void activestat()
 				SetConsoleTextAttribute(console, 31);
 				cout 
 					<< left
-					<< setw(columns) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS"
+					<< setw(columns - 1) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl
 					<< right;
 
 				size_t row = 0;
@@ -1724,9 +1726,9 @@ void activestat()
 						/* << setw(4) << format(socket_state_->packets_out) << " " */ << setw(4) << format(socket_state_->bytes_out) << " "
 						<< setw(3) << idle_ << " "
 						<< left
-						<< setw((streamsize)columns - 68) << truncate(socket_state_->process, (streamsize)columns - 68)
+						<< setw((streamsize)columns - 69) << truncate(socket_state_->process, (streamsize)columns - 69)
 						<< right
-						/* << endl */;
+						<< endl;
 					row++;
 				}
 
@@ -1736,7 +1738,7 @@ void activestat()
 				}
 
 				SetConsoleTextAttribute(console, 31);
-				cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   LO[G]   LEGEN[D]   [Q]UIT" << setw((streamsize)columns - 72) << "";
+				cout << "RE[L]OAD   [R]EFRESH: [-] " << setw(2) << REFRESH_INTERVAL << "s [+]   [P]AUSE   LO[G]   LEGEN[D]   [Q]UIT" << setw((streamsize)columns - 72) << " ";
 
 				mtx_sockets.unlock();
 
@@ -1935,7 +1937,7 @@ int main()
 			columns = csbi.srWindow.Right - csbi.srWindow.Left + 1;
 
 			SetConsoleTextAttribute(console, 31);
-			cout << left << setw((streamsize)columns) << "LOGGING: PRESS [G] AGAIN TO RETURN" << right;
+			cout << left << setw((streamsize)columns - 1) << "LOGGING: PRESS [G] AGAIN TO RETURN" << endl << right;
 			SetConsoleTextAttribute(console, 15);
 
 			mtx_console.unlock();
