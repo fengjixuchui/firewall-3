@@ -4,8 +4,6 @@ UDP	*		68	*		67	*		ACCEPT		#DHCP
 *	*		*	192.168.88.0/24	*	*		ACCEPT 		#192.168.88.*	
 UDP	*		*	8.8.8.8		53	*		ACCEPT		#Google DNS
 UDP	*		*	8.8.4.4		53	*		ACCEPT		#Google DNS
-TCP	*		*	*		80	System		ACCEPT		#System HTTP
-TCP	*		*	*		443	System		ACCEPT		#System HTTPS
 TCP	*		*	*		80	firefox.exe	ACCEPT		#Firefox HTTP
 TCP	*		*	*		443	firefox.exe	ACCEPT		#Firefox HTTPS
 TCP	*		*	*		80	chrome.exe	ACCEPT		#Chrome HTTP

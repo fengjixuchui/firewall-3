@@ -1,4 +1,5 @@
 #PROTO	LOCAL_IP	PORT	REMOTE_IP	PORT	PROCESS		ACTION
 #===================================================================================
-#TCP	*		80	*		*	System		ACCEPT		#HTTP
-#TCP	*		443	*		*	System		ACCEPT		#HTTPS
+UDP	*		68	*		67	*		ACCEPT		#DHCP
+#TCP	*		80	*		*	*		ACCEPT		#HTTP
+#TCP	*		443	*		*	*		ACCEPT		#HTTPS
