@@ -29,6 +29,7 @@ with one of the following actions: \
 \
   ACCEPT      - accept the connection and show activity \
   ACCEPT_HIDE - accept the connection but hide activity \
+  REJECT      - reject the connection with TCP RST \
   DROP        - drops the packet silently \
 \
 If no match is found, the default is DROP. \
@@ -61,6 +62,7 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 * Added restore Windows Firewall on close
 * Added legend
 * Fixed display issues
+* Added action REJECT
 
 ### v0.92
 
