@@ -383,11 +383,8 @@ void log_(time_t timestamp, string protocol, string direction,
 		char timestamp_f[21];
 		strftime(timestamp_f, 21, "%H:%M:%S", &timestamp_);
 
-		if (action.compare("ACCEPT") == 0);
-		else if (action.compare("ACCEPT_HIDE") == 0)
+		if (action.compare("ACCEPT_HIDE") == 0)
 			action = "ACCEPT";
-		//else
-		//	action = "DROP";
 
 		mtx_console.lock();
 
@@ -399,10 +396,8 @@ void log_(time_t timestamp, string protocol, string direction,
 
 		if (action.compare("ACCEPT") == 0)
 			SetConsoleTextAttribute(console, 10);
-		else if (action.compare("DROP") == 0)
+		else
 			SetConsoleTextAttribute(console, 12);
-		//else
-		//	action = "DROP";
 
 		cout
 			<< left
@@ -584,11 +579,13 @@ string socket_action(string process, string direction, string protocol, string l
 bool process_packet(time_t now, string process, string direction,
 	string protocol, string local_ip, string local_port, string remote_ip, string remote_port,
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
-	bool packet = true)
+	bool packet, bool* reject)
 {
 	string tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
 
 	socket_state* socket_state_;
+
+	*reject = false;
 
 	mtx_sockets.lock();
 
@@ -611,6 +608,10 @@ bool process_packet(time_t now, string process, string direction,
 			{
 				accept = true;
 				hide = true;
+			}
+			else if (action.compare("REJECT") == 0)
+			{
+				*reject = true;
 			}
 		}
 
@@ -701,7 +702,7 @@ bool process_loopback_packet(time_t now, string protocol,
 	string client_ip, string client_port, string client_process,
 	string server_ip, string server_port, string server_process,
 	UINT packet_len, bool fin, bool syn, bool rst, bool psh, bool ack,
-	bool packet = true)
+	bool packet, bool* reject)
 {
 	mtx_sockets.lock();
 
@@ -709,6 +710,8 @@ bool process_loopback_packet(time_t now, string protocol,
 	string in_tuple = protocol + " " + server_ip + ":" + server_port + " " + client_ip + ":" + client_port;
 
 	socket_state* socket_state_;
+
+	*reject = false;
 
 	if (sockets.find(out_tuple) == sockets.cend())
 	{
@@ -730,6 +733,10 @@ bool process_loopback_packet(time_t now, string protocol,
 			{
 				accept = true;
 				hide = true;
+			}
+			else if (action.compare("REJECT") == 0)
+			{
+				*reject = true;
 			}
 		}
 
@@ -836,6 +843,111 @@ bool process_loopback_packet(time_t now, string protocol,
 
 	return true;
 }
+
+
+
+typedef struct
+{
+	WINDIVERT_IPHDR ip;
+	WINDIVERT_TCPHDR tcp;
+} TCPPACKET, * PTCPPACKET;
+
+typedef struct
+{
+	WINDIVERT_IPV6HDR ipv6;
+	WINDIVERT_TCPHDR tcp;
+} TCPV6PACKET, * PTCPV6PACKET;
+
+typedef struct
+{
+	WINDIVERT_IPHDR ip;
+	WINDIVERT_ICMPHDR icmp;
+	UINT8 data[0];
+} ICMPPACKET, * PICMPPACKET;
+
+typedef struct
+{
+	WINDIVERT_IPV6HDR ipv6;
+	WINDIVERT_ICMPV6HDR icmpv6;
+	UINT8 data[0];
+} ICMPV6PACKET, * PICMPV6PACKET;
+
+/*
+ * Initialize a PACKET.
+ */
+static void PacketIpInit(PWINDIVERT_IPHDR packet)
+{
+	memset(packet, 0, sizeof(WINDIVERT_IPHDR));
+	packet->Version = 4;
+	packet->HdrLength = sizeof(WINDIVERT_IPHDR) / sizeof(UINT32);
+	packet->Id = ntohs(0xDEAD);
+	packet->TTL = 64;
+}
+
+/*
+ * Initialize a TCPPACKET.
+ */
+static void PacketIpTcpInit(PTCPPACKET packet)
+{
+	memset(packet, 0, sizeof(TCPPACKET));
+	PacketIpInit(&packet->ip);
+	packet->ip.Length = htons(sizeof(TCPPACKET));
+	packet->ip.Protocol = IPPROTO_TCP;
+	packet->tcp.HdrLength = sizeof(WINDIVERT_TCPHDR) / sizeof(UINT32);
+}
+
+/*
+ * Initialize an ICMPPACKET.
+ */
+static void PacketIpIcmpInit(PICMPPACKET packet)
+{
+	memset(packet, 0, sizeof(ICMPPACKET));
+	PacketIpInit(&packet->ip);
+	packet->ip.Protocol = IPPROTO_ICMP;
+}
+
+/*
+ * Initialize a PACKETV6.
+ */
+static void PacketIpv6Init(PWINDIVERT_IPV6HDR packet)
+{
+	memset(packet, 0, sizeof(WINDIVERT_IPV6HDR));
+	packet->Version = 6;
+	packet->HopLimit = 64;
+}
+
+/*
+ * Initialize a TCPV6PACKET.
+ */
+static void PacketIpv6TcpInit(PTCPV6PACKET packet)
+{
+	memset(packet, 0, sizeof(TCPV6PACKET));
+	PacketIpv6Init(&packet->ipv6);
+	packet->ipv6.Length = htons(sizeof(WINDIVERT_TCPHDR));
+	packet->ipv6.NextHdr = IPPROTO_TCP;
+	packet->tcp.HdrLength = sizeof(WINDIVERT_TCPHDR) / sizeof(UINT32);
+}
+
+/*
+ * Initialize an ICMP PACKET.
+ */
+static void PacketIpv6Icmpv6Init(PICMPV6PACKET packet)
+{
+	memset(packet, 0, sizeof(ICMPV6PACKET));
+	PacketIpv6Init(&packet->ipv6);
+	packet->ipv6.NextHdr = IPPROTO_ICMPV6;
+}
+
+TCPPACKET reset0;
+PTCPPACKET reset = &reset0;
+UINT8 dnr0[sizeof(ICMPPACKET) + 0x0F * sizeof(UINT32) + 8 + 1];
+PICMPPACKET dnr = (PICMPPACKET)dnr0;
+
+TCPV6PACKET resetv6_0;
+PTCPV6PACKET resetv6 = &resetv6_0;
+UINT8 dnrv6_0[sizeof(ICMPV6PACKET) + sizeof(WINDIVERT_IPV6HDR) +
+sizeof(WINDIVERT_TCPHDR)];
+PICMPV6PACKET dnrv6 = (PICMPV6PACKET)dnrv6_0;
 
 
 void load()
@@ -1195,6 +1307,8 @@ bool init()
 			}
 			else
 			{
+				bool reject;
+
 				if (local_ip.compare(remote_ip) == 0 || ip_match(local_ip, "127.0.0.1/8")) //loopback
 				{
 					string out_tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
@@ -1214,7 +1328,7 @@ bool init()
 								remote_ip, remote_port, process_,
 								local_ip, local_port, process,
 								0, false, true, false, false, false,
-								false))
+								false, &reject))
 							{
 								if (state.compare("ESTABLISHED") == 0)
 								{
@@ -1222,7 +1336,7 @@ bool init()
 										local_ip, local_port, process,
 										remote_ip, remote_port, process_,
 										0, false, true, false, false, true,
-										false);
+										false, &reject);
 								}
 							}
 						}
@@ -1237,38 +1351,38 @@ bool init()
 						process_packet(now, process, "->",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							false);
+							false, &reject);
 					}
 					else if (state.compare("SYN_RECV") == 0)
 					{
 						process_packet(now, process, "<-",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							false);
+							false, &reject);
 					}
 					else if (state.compare("ESTABLISHED") == 0)
 					{
 						if (process_packet(now, process, "<-",
 							protocol, local_ip, local_port, remote_ip, remote_port, 0,
 							false, true, false, false, false,
-							false))
+							false, &reject))
 						{
 							process_packet(now, process, "->",
 								protocol, local_ip, local_port, remote_ip, remote_port, 0,
 								false, true, false, false, true,
-								false);
+								false, &reject);
 						}
 						else
 						{
 							if (process_packet(now, process, "->",
 								protocol, local_ip, local_port, remote_ip, remote_port, 0,
 								false, true, false, false, false,
-								false))
+								false, &reject))
 							{
 								process_packet(now, process, "<-",
 									protocol, local_ip, local_port, remote_ip, remote_port, 0,
 									false, true, false, false, true,
-									false);
+									false, &reject);
 							}
 						}
 					}
@@ -1278,6 +1392,24 @@ bool init()
 	}
 
 	cout << "DONE!" << endl << endl;
+
+
+
+	// Initialize all packets.
+	PacketIpTcpInit(reset);
+	reset->tcp.Rst = 1;
+	reset->tcp.Ack = 1;
+	PacketIpIcmpInit(dnr);
+	dnr->icmp.Type = 3;         // Destination not reachable.
+	dnr->icmp.Code = 3;         // Port not reachable.
+	PacketIpv6TcpInit(resetv6);
+	resetv6->tcp.Rst = 1;
+	resetv6->tcp.Ack = 1;
+	PacketIpv6Icmpv6Init(dnrv6);
+	dnrv6->ipv6.Length = htons(sizeof(WINDIVERT_ICMPV6HDR) + 4 +
+		sizeof(WINDIVERT_IPV6HDR) + sizeof(WINDIVERT_TCPHDR));
+	dnrv6->icmpv6.Type = 1;     // Destination not reachable.
+	dnrv6->icmpv6.Code = 4;     // Port not reachable.
 
 	return true;
 }
@@ -1512,14 +1644,13 @@ void socket_()
 			mtx_processByPort.unlock();
 		}
 
-	cont:
 		mtx_queued.unlock();
 	}
 }
 
 void network()
 {
-	WINDIVERT_ADDRESS addr; // Packet address
+	WINDIVERT_ADDRESS addr, addr_; // Packet address
 	char packet[MAXBUF];    // Packet buffer
 	UINT packet_len;
 
@@ -1592,36 +1723,70 @@ void network()
 			dst_port = to_string(ntohs(udp_header->DstPort));
 		}
 
+		bool accept;
+		bool reject;
+
 		if (addr.Loopback)
 		{
-			if (!process_loopback_packet(now, protocol,
-				src_ip, src_port, processByPort(protocol, src_ip, src_port),
-				dst_ip, dst_port, processByPort(protocol, dst_ip, dst_port),
-				packet_len, fin, syn, rst, psh, ack))
-			{
-				goto cont;
-			}
+			accept =
+				process_loopback_packet(now, protocol,
+					src_ip, src_port, processByPort(protocol, src_ip, src_port),
+					dst_ip, dst_port, processByPort(protocol, dst_ip, dst_port),
+					packet_len, fin, syn, rst, psh, ack, true, &reject);
 		}
 		else if (addr.Outbound)
 		{
-			if (!process_packet(now, processByPort(protocol, src_ip, src_port), "->",
-				protocol, src_ip, src_port, dst_ip, dst_port,
-				packet_len, fin, syn, rst, psh, ack))
-			{
-				goto cont;
-			}
+			accept =
+				process_packet(now, processByPort(protocol, src_ip, src_port), "->",
+					protocol, src_ip, src_port, dst_ip, dst_port,
+					packet_len, fin, syn, rst, psh, ack, true, &reject);
 		}
 		else
 		{
-			if (!process_packet(now, processByPort(protocol, dst_ip, dst_port), "<-",
-				protocol, dst_ip, dst_port, src_ip, src_port,
-				packet_len, fin, syn, rst, psh, ack))
-			{
-				goto cont;
-			}
+			accept =
+				process_packet(now, processByPort(protocol, dst_ip, dst_port), "<-",
+					protocol, dst_ip, dst_port, src_ip, src_port,
+					packet_len, fin, syn, rst, psh, ack, true, &reject);
 		}
 
-		WinDivertSend(n_handle, packet, packet_len, NULL, &addr);
+		if (accept)
+			WinDivertSend(n_handle, packet, packet_len, NULL, &addr);
+
+		if (reject)
+		{
+			if (tcp_header != NULL)
+			{
+				reset->ip.SrcAddr = ip_header->DstAddr;
+				reset->ip.DstAddr = ip_header->SrcAddr;
+				reset->tcp.SrcPort = tcp_header->DstPort;
+				reset->tcp.DstPort = tcp_header->SrcPort;
+				reset->tcp.SeqNum =
+					(tcp_header->Ack ? tcp_header->AckNum : 0);
+				reset->tcp.AckNum =
+					(tcp_header->Syn ?
+						htonl(ntohl(tcp_header->SeqNum) + 1) :
+						htonl(ntohl(tcp_header->SeqNum) + payload_len));
+
+				memcpy(&addr_, &addr, sizeof(addr_));
+				addr_.Outbound = !addr.Outbound;
+				WinDivertHelperCalcChecksums((PVOID)reset, sizeof(TCPPACKET), &addr_, 0);
+				WinDivertSend(n_handle, (PVOID)reset, sizeof(TCPPACKET), NULL, &addr_);
+			}
+			else if (udp_header != NULL)
+			{
+				UINT icmp_length = ip_header->HdrLength * sizeof(UINT32) + 8;
+				memcpy(dnr->data, ip_header, icmp_length);
+				icmp_length += sizeof(ICMPPACKET);
+				dnr->ip.Length = htons((UINT16)icmp_length);
+				dnr->ip.SrcAddr = ip_header->DstAddr;
+				dnr->ip.DstAddr = ip_header->SrcAddr;
+
+				memcpy(&addr_, &addr, sizeof(addr_));
+				addr_.Outbound = !addr.Outbound;
+				WinDivertHelperCalcChecksums((PVOID)dnr, icmp_length, &addr_, 0);
+				WinDivertSend(n_handle, (PVOID)dnr, icmp_length, NULL, &addr_);
+			}
+		}
 
 	cont:
 		mtx_queued.unlock();
@@ -1695,7 +1860,7 @@ void activestat()
 				SetConsoleTextAttribute(console, 31);
 				cout 
 					<< left
-					<< setw(columns - 1) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl
+					<< setw(columns - (short)1) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl
 					<< right;
 
 				size_t row = 0;
