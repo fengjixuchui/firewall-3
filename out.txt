@@ -13,3 +13,4 @@ TCP	*		*	*		23	putty.exe	ACCEPT		#PuTTY Telnet
 TCP	*		*	*		22	WinSCP.exe	ACCEPT		#WinSCP SFTP
 TCP	*		*	*		8333	bitcoin-qt.exe	ACCEPT		#Bitcoin Core
 TCP	*		*	*		*	tor.exe		ACCEPT		#Tor
+*	*		*	*		*	*		REJECT		#Reject All Others
