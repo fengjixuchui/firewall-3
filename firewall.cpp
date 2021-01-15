@@ -338,7 +338,7 @@ struct loopback_rule
 	string policy;
 };
 
-#define MAXBUF 4096
+#define MAXBUF 65536
 #define INET6_ADDRSTRLEN 45
 
 UINT TIMEOUT = 5;
@@ -718,26 +718,46 @@ bool process_loopback_packet(time_t now, string protocol,
 		bool accept = false;
 		bool hide = false;
 
+		string action;
+		string status;
+
 		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
 		{
-			string action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
+			status = "CNCT";
+
+			action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
 
 			log_(now, protocol, "->", client_ip, client_port, server_ip, server_port, client_process, action);
 			log_(now, protocol, "<-", server_ip, server_port, client_ip, client_port, server_process, action);
+		}
+		else
+		{
+			status = "EST";
 
-			if (action.compare("ACCEPT") == 0)
-			{
-				accept = true;
-			}
-			else if (action.compare("ACCEPT_HIDE") == 0)
-			{
-				accept = true;
-				hide = true;
-			}
-			else if (action.compare("REJECT") == 0)
-			{
-				*reject = true;
-			}
+			action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
+
+			//string action =
+			//	(fin ? string("F") : string(" ")) +
+			//	(syn ? string("S") : string(" ")) +
+			//	(rst ? string("R") : string(" ")) +
+			//	(psh ? string("P") : string(" ")) +
+			//	(ack ? string("A") : string(" "));
+			//log_(now, protocol, "->", client_ip, client_port, server_ip, server_port, client_process, action);
+			////log_(now, protocol, "<-", server_ip, server_port, client_ip, client_port, server_process, action);
+		}
+
+		if (action.compare("ACCEPT") == 0)
+		{
+			accept = true;
+		}
+		else if (action.compare("ACCEPT_HIDE") == 0)
+		{
+			accept = true;
+			hide = true;
+		}
+		else if (action.compare("REJECT") == 0)
+		{
+			*reject = true;
 		}
 
 		if (!accept)
@@ -758,7 +778,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		socket_state_->remote_ip = server_ip;
 		socket_state_->remote_port = server_port;
 		socket_state_->direction = "->";
-		socket_state_->status = "CNCT";
+		socket_state_->status = status;
 		socket_state_->heartbeat = now;
 
 		sockets[out_tuple] = socket_state_;
@@ -783,7 +803,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		socket_state_->remote_ip = client_ip;
 		socket_state_->remote_port = client_port;
 		socket_state_->direction = "<-";
-		socket_state_->status = "CNCT";
+		socket_state_->status = status;
 		socket_state_->heartbeat = now;
 
 		sockets[in_tuple] = socket_state_;
@@ -862,14 +882,14 @@ typedef struct
 {
 	WINDIVERT_IPHDR ip;
 	WINDIVERT_ICMPHDR icmp;
-	UINT8 data[0];
+	UINT8 data[];
 } ICMPPACKET, * PICMPPACKET;
 
 typedef struct
 {
 	WINDIVERT_IPV6HDR ipv6;
 	WINDIVERT_ICMPV6HDR icmpv6;
-	UINT8 data[0];
+	UINT8 data[];
 } ICMPV6PACKET, * PICMPV6PACKET;
 
 /*
@@ -1860,7 +1880,7 @@ void activestat()
 				SetConsoleTextAttribute(console, 31);
 				cout 
 					<< left
-					<< setw(columns - (short)1) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl
+					<< setw((streamsize)columns - 1) << "PRO STAT LOCAL                  REMOTE                RECV SENT IDL PROCESS" << endl
 					<< right;
 
 				size_t row = 0;
