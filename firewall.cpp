@@ -22,7 +22,8 @@
 
 #include "windivert.h"
 
-#pragma comment( lib, "ole32.lib" )
+#pragma comment(lib, "ole32.lib")
+#pragma warning(disable: 4200)
 
 using namespace std;
 
@@ -114,12 +115,22 @@ vector<string> split_args(string str)
 {
 	vector<string> tmp;
 	string arg = "";
+	boolean escape = false;
 	for (string::size_type i = 0; i < str.size(); i++)
 	{
 		char c = str[i];
-		if (c == '#')
+		if (escape)
+		{
+			arg.push_back(c);
+			escape = false;
+		}
+		else if (c == '#')
 		{
 			break;
+		}
+		else if (c == '\\')
+		{
+			escape = true;
 		}
 		else if (isspace(c))
 		{
@@ -338,7 +349,7 @@ struct loopback_rule
 	string policy;
 };
 
-#define MAXBUF 65536
+#define MAXBUF 4096
 #define INET6_ADDRSTRLEN 45
 
 UINT TIMEOUT = 5;
@@ -1118,7 +1129,7 @@ void load()
 			cout << "  FAILED!" << endl << endl;
 
 			cout << "  Fix errors and press any key...";
-			_getch();
+			int tmp = _getch();
 		}
 		else
 		{
@@ -1788,7 +1799,7 @@ void network()
 						htonl(ntohl(tcp_header->SeqNum) + payload_len));
 
 				memcpy(&addr_, &addr, sizeof(addr_));
-				addr_.Outbound = !addr.Outbound;
+				addr_.Outbound = ~addr.Outbound;
 				WinDivertHelperCalcChecksums((PVOID)reset, sizeof(TCPPACKET), &addr_, 0);
 				WinDivertSend(n_handle, (PVOID)reset, sizeof(TCPPACKET), NULL, &addr_);
 			}
@@ -1802,7 +1813,7 @@ void network()
 				dnr->ip.DstAddr = ip_header->SrcAddr;
 
 				memcpy(&addr_, &addr, sizeof(addr_));
-				addr_.Outbound = !addr.Outbound;
+				addr_.Outbound = ~addr.Outbound;
 				WinDivertHelperCalcChecksums((PVOID)dnr, icmp_length, &addr_, 0);
 				WinDivertSend(n_handle, (PVOID)dnr, icmp_length, NULL, &addr_);
 			}
@@ -1892,7 +1903,7 @@ void activestat()
 					string & tuple = *i;
 					socket_state * socket_state_ = sockets[tuple];
 
-					ULONG idle = difftime(now, socket_state_->heartbeat);
+					ULONG idle = (ULONG)difftime(now, socket_state_->heartbeat);
 					string idle_ = idle > 999 ? "000" : to_string(idle);
 
 					if (socket_state_->status.compare("CNCT") == 0)
@@ -2030,10 +2041,10 @@ int main()
 
 	if (!init()) return 1;
 
-	thread socket_(socket_);
-	thread network(network);
-	thread heartbeat(heartbeat);
-	thread activestat(activestat);
+	thread t_socket(socket_);
+	thread t_network(network);
+	thread t_heartbeat(heartbeat);
+	thread t_activestat(activestat);
 
 	CONSOLE_SCREEN_BUFFER_INFO csbi;
 	short rows, columns;

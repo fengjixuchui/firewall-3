@@ -1,4 +1,4 @@
-# firewall.exe v0.93
+# firewall.exe v0.94
 
 ![](screenshot.png)
 
@@ -7,7 +7,7 @@
 ## Requirements:
 
   [WinDivert 2.2](https://www.reqrypt.org/windivert.html) (included)\
-  [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017 and 2019 (x86)](https://aka.ms/vs/16/release/vc_redist.x86.exe) (download)
+  [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017, 2019 and 2022 (x86)](https://aka.ms/vs/17/release/vc_redist.x86.exe) (download)
 
 
 
@@ -36,9 +36,10 @@ If no match is found, the default is DROP. \
 \
 \# precedes a comment \
 \* represents a wildcard \
+\\ escapes the next character eg. space in process name
 IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
-3. Run firewall.exe as Administrator
+3. Run firewall.exe
 
 
 
@@ -51,6 +52,11 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 
 ## Changes
+
+### v0.94
+
+* Upgraded to Visual Studio 2022
+* Added escape character
 
 ### v0.93
 
