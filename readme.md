@@ -36,7 +36,7 @@ If no match is found, the default is DROP. \
 \
 \# precedes a comment \
 \* represents a wildcard \
-\\ escapes the next character eg. space in process name
+\\ escapes the next character eg. space in process name \
 IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 3. Run firewall.exe
