@@ -1459,7 +1459,7 @@ void reload()
 
 	mtx_sockets.lock();
 
-	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); i++)
+	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); )
 	{
 		string tuple = i->first;
 		socket_state* socket_state_ = i->second;
@@ -1491,9 +1491,10 @@ void reload()
 
 				if (accept)
 				{
-					list<string>::iterator i;
 					if (hide)
 					{
+						list<string>::iterator i;
+
 						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
 						if (i != sockets_order.end())
 						{
@@ -1508,6 +1509,8 @@ void reload()
 					}
 					else
 					{
+						list<string>::iterator i;
+
 						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
 						if (i == sockets_order.end())
 						{
@@ -1519,15 +1522,20 @@ void reload()
 							sockets_order.push_front(in_tuple);
 						}
 					}
+					i++;
 				}
 				else
 				{
-					sockets.erase(out_tuple);
+					i = sockets.erase(i);
 					sockets_order.remove(out_tuple);
 
 					sockets.erase(in_tuple);
 					sockets_order.remove(in_tuple);
 				}
+			}
+			else
+			{
+				i++;
 			}
 		}
 		else
@@ -1565,10 +1573,11 @@ void reload()
 						sockets_order.push_front(tuple);
 					}
 				}
+				i++;
 			}
 			else
 			{
-				sockets.erase(tuple);
+				i = sockets.erase(i);
 				sockets_order.remove(tuple);
 			}
 		}
@@ -1799,7 +1808,7 @@ void network()
 						htonl(ntohl(tcp_header->SeqNum) + payload_len));
 
 				memcpy(&addr_, &addr, sizeof(addr_));
-				addr_.Outbound = ~addr.Outbound;
+				addr_.Outbound = !addr.Outbound;
 				WinDivertHelperCalcChecksums((PVOID)reset, sizeof(TCPPACKET), &addr_, 0);
 				WinDivertSend(n_handle, (PVOID)reset, sizeof(TCPPACKET), NULL, &addr_);
 			}
@@ -1813,7 +1822,7 @@ void network()
 				dnr->ip.DstAddr = ip_header->SrcAddr;
 
 				memcpy(&addr_, &addr, sizeof(addr_));
-				addr_.Outbound = ~addr.Outbound;
+				addr_.Outbound = !addr.Outbound;
 				WinDivertHelperCalcChecksums((PVOID)dnr, icmp_length, &addr_, 0);
 				WinDivertSend(n_handle, (PVOID)dnr, icmp_length, NULL, &addr_);
 			}

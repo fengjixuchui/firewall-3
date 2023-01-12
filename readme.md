@@ -53,10 +53,16 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 ## Changes
 
+### v0.95
+
+* Upgraded to WinDivert 2.2.2
+* Fixed reload bug
+
 ### v0.94
 
 * Upgraded to Visual Studio 2022
 * Added escape character
+* Set UAC execution level to Administrator
 
 ### v0.93
 
