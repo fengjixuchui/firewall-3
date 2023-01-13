@@ -1,4 +1,4 @@
-# firewall.exe v0.95
+# firewall.exe v0.96
 
 ![](screenshot.png)
 
@@ -19,7 +19,6 @@
 
 2. Edit firewall rule tables
 
-* loopback.txt (Loopback rules)
 * out.txt (Outbound rules)
 * in.txt (Inbound rules)
 
@@ -52,6 +51,11 @@ IP Subnets are allowed in CIDR format eg. 192.168.0.0/24
 
 
 ## Changes
+
+### v0.96
+
+* Added restore Windows Firewall on shutdown/logoff
+* Excluded loopback from firewall (was problematic)
 
 ### v0.95
 
