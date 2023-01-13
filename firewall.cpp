@@ -22,7 +22,8 @@
 
 #include "windivert.h"
 
-#pragma comment( lib, "ole32.lib" )
+#pragma comment(lib, "ole32.lib")
+#pragma warning(disable: 4200)
 
 using namespace std;
 
@@ -114,12 +115,22 @@ vector<string> split_args(string str)
 {
 	vector<string> tmp;
 	string arg = "";
+	boolean escape = false;
 	for (string::size_type i = 0; i < str.size(); i++)
 	{
 		char c = str[i];
-		if (c == '#')
+		if (escape)
+		{
+			arg.push_back(c);
+			escape = false;
+		}
+		else if (c == '#')
 		{
 			break;
+		}
+		else if (c == '\\')
+		{
+			escape = true;
 		}
 		else if (isspace(c))
 		{
@@ -338,7 +349,7 @@ struct loopback_rule
 	string policy;
 };
 
-#define MAXBUF 65536
+#define MAXBUF 4096
 #define INET6_ADDRSTRLEN 45
 
 UINT TIMEOUT = 5;
@@ -721,7 +732,7 @@ bool process_loopback_packet(time_t now, string protocol,
 		string action;
 		string status;
 
-		if ((protocol.compare("TCP") == 0 && syn && !ack) || protocol.compare("UDP") == 0)
+		if ((protocol.compare("TCP") == 0 /* && syn && !ack */) || protocol.compare("UDP") == 0)
 		{
 			status = "CNCT";
 
@@ -735,15 +746,6 @@ bool process_loopback_packet(time_t now, string protocol,
 			status = "EST";
 
 			action = loopback_socket_action(protocol, client_ip, client_port, client_process, server_ip, server_port, server_process);
-
-			//string action =
-			//	(fin ? string("F") : string(" ")) +
-			//	(syn ? string("S") : string(" ")) +
-			//	(rst ? string("R") : string(" ")) +
-			//	(psh ? string("P") : string(" ")) +
-			//	(ack ? string("A") : string(" "));
-			//log_(now, protocol, "->", client_ip, client_port, server_ip, server_port, client_process, action);
-			////log_(now, protocol, "<-", server_ip, server_port, client_ip, client_port, server_process, action);
 		}
 
 		if (action.compare("ACCEPT") == 0)
@@ -1118,7 +1120,7 @@ void load()
 			cout << "  FAILED!" << endl << endl;
 
 			cout << "  Fix errors and press any key...";
-			_getch();
+			int tmp = _getch();
 		}
 		else
 		{
@@ -1232,7 +1234,7 @@ bool init()
 	cout << "  OPENING SOCKET HANDLE: ";
 
 	s_handle = WinDivertOpen(
-		"true",
+		"not loopback",
 		WINDIVERT_LAYER_SOCKET, 1, WINDIVERT_FLAG_SNIFF + WINDIVERT_FLAG_READ_ONLY);
 	if (s_handle == INVALID_HANDLE_VALUE)
 	{
@@ -1247,7 +1249,7 @@ bool init()
 	cout << "  OPENING NETWORK HANDLE: ";
 
 	n_handle = WinDivertOpen(
-		"true",
+		"not loopback",
 		WINDIVERT_LAYER_NETWORK, 0, 0);
 	if (n_handle == INVALID_HANDLE_VALUE)
 	{
@@ -1331,38 +1333,38 @@ bool init()
 
 				if (local_ip.compare(remote_ip) == 0 || ip_match(local_ip, "127.0.0.1/8")) //loopback
 				{
-					string out_tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
-					string in_tuple = protocol + " " + remote_ip + ":" + remote_port + " " + local_ip + ":" + local_port;
+					//string out_tuple = protocol + " " + local_ip + ":" + local_port + " " + remote_ip + ":" + remote_port;
+					//string in_tuple = protocol + " " + remote_ip + ":" + remote_port + " " + local_ip + ":" + local_port;
 
-					if (loopback.find(in_tuple) == loopback.cend())
-					{
-						loopback[out_tuple] = process;
-					}
-					else //match
-					{
-						string process_ = loopback[in_tuple];
+					//if (loopback.find(in_tuple) == loopback.cend())
+					//{
+					//	loopback[out_tuple] = process;
+					//}
+					//else //match
+					//{
+					//	string process_ = loopback[in_tuple];
 
-						if (state.compare("ESTABLISHED") == 0 || state.compare("SYN_RECV") == 0)
-						{
-							if (process_loopback_packet(now, protocol,
-								remote_ip, remote_port, process_,
-								local_ip, local_port, process,
-								0, false, true, false, false, false,
-								false, &reject))
-							{
-								if (state.compare("ESTABLISHED") == 0)
-								{
-									process_loopback_packet(now, protocol,
-										local_ip, local_port, process,
-										remote_ip, remote_port, process_,
-										0, false, true, false, false, true,
-										false, &reject);
-								}
-							}
-						}
+					//	if (state.compare("ESTABLISHED") == 0 || state.compare("SYN_RECV") == 0)
+					//	{
+					//		if (process_loopback_packet(now, protocol,
+					//			remote_ip, remote_port, process_,
+					//			local_ip, local_port, process,
+					//			0, false, true, false, false, false,
+					//			false, &reject))
+					//		{
+					//			if (state.compare("ESTABLISHED") == 0)
+					//			{
+					//				process_loopback_packet(now, protocol,
+					//					local_ip, local_port, process,
+					//					remote_ip, remote_port, process_,
+					//					0, false, true, false, false, true,
+					//					false, &reject);
+					//			}
+					//		}
+					//	}
 
-						loopback.erase(in_tuple);
-					}
+					//	loopback.erase(in_tuple);
+					//}
 				}
 				else
 				{
@@ -1448,7 +1450,7 @@ void reload()
 
 	mtx_sockets.lock();
 
-	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); i++)
+	for (unordered_map<string, socket_state*>::iterator i = sockets.begin(); i != sockets.end(); )
 	{
 		string tuple = i->first;
 		socket_state* socket_state_ = i->second;
@@ -1480,9 +1482,10 @@ void reload()
 
 				if (accept)
 				{
-					list<string>::iterator i;
 					if (hide)
 					{
+						list<string>::iterator i;
+
 						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
 						if (i != sockets_order.end())
 						{
@@ -1497,6 +1500,8 @@ void reload()
 					}
 					else
 					{
+						list<string>::iterator i;
+
 						i = find(sockets_order.begin(), sockets_order.end(), out_tuple);
 						if (i == sockets_order.end())
 						{
@@ -1508,15 +1513,20 @@ void reload()
 							sockets_order.push_front(in_tuple);
 						}
 					}
+					i++;
 				}
 				else
 				{
-					sockets.erase(out_tuple);
+					i = sockets.erase(i);
 					sockets_order.remove(out_tuple);
 
 					sockets.erase(in_tuple);
 					sockets_order.remove(in_tuple);
 				}
+			}
+			else
+			{
+				i++;
 			}
 		}
 		else
@@ -1554,10 +1564,11 @@ void reload()
 						sockets_order.push_front(tuple);
 					}
 				}
+				i++;
 			}
 			else
 			{
-				sockets.erase(tuple);
+				i = sockets.erase(i);
 				sockets_order.remove(tuple);
 			}
 		}
@@ -1892,7 +1903,7 @@ void activestat()
 					string & tuple = *i;
 					socket_state * socket_state_ = sockets[tuple];
 
-					ULONG idle = difftime(now, socket_state_->heartbeat);
+					ULONG idle = (ULONG)difftime(now, socket_state_->heartbeat);
 					string idle_ = idle > 999 ? "000" : to_string(idle);
 
 					if (socket_state_->status.compare("CNCT") == 0)
@@ -2015,9 +2026,42 @@ BOOL WINAPI CtrlHandler(DWORD fdwCtrlType)
 	case CTRL_LOGOFF_EVENT:
 	case CTRL_SHUTDOWN_EVENT:
 		quit();
-		return FALSE;
+		return TRUE;
 	default:
 		return FALSE;
+	}
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	switch (msg)
+	{
+	case WM_QUERYENDSESSION:
+		return TRUE;
+	case WM_ENDSESSION:
+		quit();
+		return 0;
+	default:
+		return DefWindowProc(hwnd, msg, wParam, lParam);
+	}
+}
+
+void window()
+{
+	WNDCLASS wndclass{ 0 };
+	wndclass.lpszClassName = L"CtrlHandler";
+	wndclass.lpfnWndProc = WindowProc;
+	RegisterClass(&wndclass);
+	HWND hwnd = CreateWindowEx(0, wndclass.lpszClassName, L"", 0,
+		CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+		nullptr, nullptr, nullptr, nullptr);
+	ShowWindow(hwnd, SW_HIDE);
+
+	MSG msg{};
+	while (GetMessage(&msg, nullptr, 0, 0) > 0)
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
 	}
 }
 
@@ -2030,10 +2074,12 @@ int main()
 
 	if (!init()) return 1;
 
-	thread socket_(socket_);
-	thread network(network);
-	thread heartbeat(heartbeat);
-	thread activestat(activestat);
+	thread t_window(window);
+
+	thread t_socket(socket_);
+	thread t_network(network);
+	thread t_heartbeat(heartbeat);
+	thread t_activestat(activestat);
 
 	CONSOLE_SCREEN_BUFFER_INFO csbi;
 	short rows, columns;
